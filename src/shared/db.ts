@@ -19,7 +19,7 @@ const connectionOptions: postgres.Options<Record<string, never>> = {
   idle_timeout: 30,
   connect_timeout: 10,
   max_lifetime: 60 * 30,
-  prepare: true,
+  prepare: false,
   onnotice: (notice) => {
     logger.debug({ notice: notice.message }, "postgres_notice");
   },

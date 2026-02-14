@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { sql } from "drizzle-orm";
 import { ledgerService } from "../../../src/ledger/service";
 import { verifySystemBalance } from "../../helpers/god-check";
 import { cleanBetweenTests, getTestSQL, setupTestDB, teardownTestDB } from "../../helpers/setup";
@@ -41,10 +40,11 @@ describe("ledger immutability", () => {
     });
 
     const entryId = txn.entries[0]!.id;
+    const rawSql = getTestSQL();
 
-    await expect(
-      db.execute(sql`UPDATE ledger_entries SET amount = 9999 WHERE id = ${entryId}`),
-    ).rejects.toThrow(/immut/i);
+    const updateErr = await rawSql`UPDATE ledger_entries SET amount = 9999 WHERE id = ${entryId}`.catch((e: unknown) => e);
+    expect(updateErr).toBeInstanceOf(Error);
+    expect((updateErr as Error).message).toMatch(/immut/i);
   });
 
   it("DELETE on ledger_entries is rejected by immutability trigger", async () => {
@@ -57,10 +57,11 @@ describe("ledger immutability", () => {
     });
 
     const entryId = txn.entries[0]!.id;
+    const rawSql = getTestSQL();
 
-    await expect(db.execute(sql`DELETE FROM ledger_entries WHERE id = ${entryId}`)).rejects.toThrow(
-      /immut/i,
-    );
+    const deleteErr = await rawSql`DELETE FROM ledger_entries WHERE id = ${entryId}`.catch((e: unknown) => e);
+    expect(deleteErr).toBeInstanceOf(Error);
+    expect((deleteErr as Error).message).toMatch(/immut/i);
   });
 
   it("correcting a mistake uses reversal pattern — net balance is correct", async () => {

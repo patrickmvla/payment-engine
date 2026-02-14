@@ -29,9 +29,13 @@ export async function setupTestDB() {
     throw new Error("TEST_DATABASE_URL is required to run tests");
   }
 
+  const ssl = process.env.DATABASE_SSL === "true";
+
   sql = postgres(testUrl, {
     max: 5,
     idle_timeout: 10,
+    prepare: false,
+    ssl: ssl ? "require" : false,
   });
 
   db = drizzle(sql);
