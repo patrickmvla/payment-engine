@@ -315,4 +315,4 @@ These compile but contain no test logic yet. They're scaffolding for Phase 2+.
 
 ---
 
-**Next:** [Phase 2 — Ledger Layer](./phase-2-ledger.md) (TDD: ~25 tests)
+**Next:** [Phase 2 — Ledger Layer](./phase-2-ledger.md)

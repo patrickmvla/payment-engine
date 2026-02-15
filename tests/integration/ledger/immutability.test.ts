@@ -42,7 +42,10 @@ describe("ledger immutability", () => {
     const entryId = txn.entries[0]!.id;
     const rawSql = getTestSQL();
 
-    const updateErr = await rawSql`UPDATE ledger_entries SET amount = 9999 WHERE id = ${entryId}`.catch((e: unknown) => e);
+    const updateErr =
+      await rawSql`UPDATE ledger_entries SET amount = 9999 WHERE id = ${entryId}`.catch(
+        (e: unknown) => e,
+      );
     expect(updateErr).toBeInstanceOf(Error);
     expect((updateErr as Error).message).toMatch(/immut/i);
   });
@@ -59,7 +62,9 @@ describe("ledger immutability", () => {
     const entryId = txn.entries[0]!.id;
     const rawSql = getTestSQL();
 
-    const deleteErr = await rawSql`DELETE FROM ledger_entries WHERE id = ${entryId}`.catch((e: unknown) => e);
+    const deleteErr = await rawSql`DELETE FROM ledger_entries WHERE id = ${entryId}`.catch(
+      (e: unknown) => e,
+    );
     expect(deleteErr).toBeInstanceOf(Error);
     expect((deleteErr as Error).message).toMatch(/immut/i);
   });
