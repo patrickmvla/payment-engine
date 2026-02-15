@@ -10,6 +10,7 @@
     "test:unit": "bun test --timeout 30000 tests/unit/",
     "test:integration": "bun test --timeout 30000 tests/integration/",
     "test:e2e": "bun test --timeout 30000 tests/e2e/",
+    "test:load": "bun test --timeout 60000 tests/load/",
     "db:migrate": "bun run drizzle-kit migrate",
     "db:generate": "bun run drizzle-kit generate",
     "db:seed": "bun run src/shared/seed.ts",

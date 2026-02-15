@@ -34,6 +34,7 @@ export async function setupTestDB() {
   sql = postgres(testUrl, {
     max: 5,
     idle_timeout: 10,
+    connect_timeout: 30,
     prepare: false,
     ssl: ssl ? "require" : false,
   });

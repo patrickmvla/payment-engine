@@ -17,7 +17,7 @@ const connectionOptions: postgres.Options<Record<string, never>> = {
   ssl: config.DATABASE_SSL ? "require" : false,
   max: config.DB_POOL_SIZE,
   idle_timeout: 30,
-  connect_timeout: 10,
+  connect_timeout: 30,
   max_lifetime: 60 * 30,
   prepare: false,
   onnotice: (notice) => {

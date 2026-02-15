@@ -1,39 +1,37 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
-import { setupOpenAPI } from "./openapi.ts";
-import { config } from "./shared/config.ts";
-import { closeDatabase, validateDatabase } from "./shared/db.ts";
-import { AppError } from "./shared/errors.ts";
-import { logger } from "./shared/logger.ts";
+import { ledgerRoutes } from "./ledger/routes";
+import { setupOpenAPI } from "./openapi";
+import { paymentRoutes } from "./payments/routes";
+import { config } from "./shared/config";
+import { closeDatabase, validateDatabase } from "./shared/db";
+import { errorHandler } from "./shared/middleware/error-handler";
+import { rateLimiter } from "./shared/middleware/rate-limit";
+import { requestTracing, securityHeaders } from "./shared/middleware/security";
+import { logger } from "./shared/logger";
 
 const app = new OpenAPIHono();
 
-// Global error handler
-app.onError((err, c) => {
-  if (err instanceof AppError) {
-    return c.json(err.toJSON(), err.statusCode as 400);
-  }
+// Middleware (order matters)
+app.use("*", requestTracing);
+app.use("*", securityHeaders);
+app.use("/api/*", rateLimiter);
 
-  logger.error({ error: err.message, stack: err.stack }, "Unhandled error");
-  return c.json(
-    {
-      error: {
-        type: "internal_error",
-        message: "An unexpected error occurred",
-      },
-    },
-    500,
-  );
-});
+// Global error handler
+app.onError(errorHandler);
 
 // Health check
 app.get("/health", (c) => {
   return c.json({
-    status: "ok",
+    status: "healthy",
     version: config.APP_VERSION,
     environment: config.APP_ENV,
     timestamp: new Date().toISOString(),
   });
 });
+
+// Routes
+app.route("/", paymentRoutes);
+app.route("/", ledgerRoutes);
 
 // OpenAPI + Scalar docs
 setupOpenAPI(app);
@@ -64,12 +62,16 @@ async function start() {
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
-start().catch((err) => {
-  logger.fatal(
-    { error: err instanceof Error ? err.message : String(err) },
-    "Failed to start server",
-  );
-  process.exit(1);
-});
+if (import.meta.main) {
+  start().catch((err) => {
+    logger.fatal(
+      { error: err instanceof Error ? err.message : String(err) },
+      "Failed to start server",
+    );
+    process.exit(1);
+  });
+}
 
 export default app;
+export { app };
+export type AppType = typeof app;
