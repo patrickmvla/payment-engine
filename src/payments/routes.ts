@@ -1,11 +1,41 @@
-import { OpenAPIHono } from "@hono/zod-openapi";
+import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import { db } from "../shared/db";
 import { ValidationError } from "../shared/errors";
-import { AuthorizeSchema, CaptureSchema, RefundSchema } from "./schemas";
+import {
+  AuthorizeSchema,
+  CaptureSchema,
+  ErrorResponseSchema,
+  IdempotencyKeyHeaderSchema,
+  ListPaymentsQuerySchema,
+  PaymentIdParamSchema,
+  PaymentListResponseSchema,
+  PaymentResponseSchema,
+  RefundSchema,
+} from "./schemas";
 import { paymentService } from "./service";
 import type { PaymentRecord } from "./types";
 
-const app = new OpenAPIHono();
+const app = new OpenAPIHono({
+  defaultHook: (result, c) => {
+    if (!result.success) {
+      return c.json(
+        {
+          error: {
+            type: "validation_error",
+            message: "Request validation failed",
+            details: {
+              fields: result.error.issues.map((i) => ({
+                field: i.path.join("."),
+                message: i.message,
+              })),
+            },
+          },
+        },
+        400,
+      );
+    }
+  },
+});
 
 function toPaymentResponse(payment: PaymentRecord) {
   return {
@@ -33,22 +63,180 @@ function requireIdempotencyKey(c: any): string {
   return key;
 }
 
-// POST /api/v1/payments/authorize
-app.post("/api/v1/payments/authorize", async (c) => {
+// --- Route definitions ---
+
+const authorizeRoute = createRoute({
+  method: "post",
+  path: "/api/v1/payments/authorize",
+  tags: ["Payments"],
+  summary: "Authorize a payment (hold funds)",
+  request: {
+    headers: IdempotencyKeyHeaderSchema,
+    body: { content: { "application/json": { schema: AuthorizeSchema } } },
+  },
+  responses: {
+    201: {
+      description: "Payment authorized",
+      content: { "application/json": { schema: PaymentResponseSchema } },
+    },
+    400: {
+      description: "Validation error",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    409: {
+      description: "Idempotency conflict",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
+const captureRoute = createRoute({
+  method: "post",
+  path: "/api/v1/payments/{id}/capture",
+  tags: ["Payments"],
+  summary: "Capture an authorized payment",
+  request: {
+    headers: IdempotencyKeyHeaderSchema,
+    params: PaymentIdParamSchema,
+    body: { content: { "application/json": { schema: CaptureSchema } }, required: false },
+  },
+  responses: {
+    200: {
+      description: "Payment captured",
+      content: { "application/json": { schema: PaymentResponseSchema } },
+    },
+    404: {
+      description: "Payment not found",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    409: {
+      description: "Invalid state transition",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
+const voidRoute = createRoute({
+  method: "post",
+  path: "/api/v1/payments/{id}/void",
+  tags: ["Payments"],
+  summary: "Void an authorized payment",
+  request: {
+    headers: IdempotencyKeyHeaderSchema,
+    params: PaymentIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Payment voided",
+      content: { "application/json": { schema: PaymentResponseSchema } },
+    },
+    404: {
+      description: "Payment not found",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    409: {
+      description: "Invalid state transition",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
+const settleRoute = createRoute({
+  method: "post",
+  path: "/api/v1/payments/{id}/settle",
+  tags: ["Payments"],
+  summary: "Settle a captured payment",
+  request: {
+    headers: IdempotencyKeyHeaderSchema,
+    params: PaymentIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Payment settled",
+      content: { "application/json": { schema: PaymentResponseSchema } },
+    },
+    404: {
+      description: "Payment not found",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    409: {
+      description: "Invalid state transition",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
+const refundRoute = createRoute({
+  method: "post",
+  path: "/api/v1/payments/{id}/refund",
+  tags: ["Payments"],
+  summary: "Refund a captured or settled payment",
+  request: {
+    headers: IdempotencyKeyHeaderSchema,
+    params: PaymentIdParamSchema,
+    body: { content: { "application/json": { schema: RefundSchema } }, required: false },
+  },
+  responses: {
+    200: {
+      description: "Payment refunded",
+      content: { "application/json": { schema: PaymentResponseSchema } },
+    },
+    404: {
+      description: "Payment not found",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    409: {
+      description: "Invalid state transition",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+    422: {
+      description: "Invalid amount",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
+const getPaymentRoute = createRoute({
+  method: "get",
+  path: "/api/v1/payments/{id}",
+  tags: ["Payments"],
+  summary: "Get a payment by ID",
+  request: {
+    params: PaymentIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Payment details",
+      content: { "application/json": { schema: PaymentResponseSchema } },
+    },
+    404: {
+      description: "Payment not found",
+      content: { "application/json": { schema: ErrorResponseSchema } },
+    },
+  },
+});
+
+const listPaymentsRoute = createRoute({
+  method: "get",
+  path: "/api/v1/payments",
+  tags: ["Payments"],
+  summary: "List payments (cursor pagination)",
+  request: {
+    query: ListPaymentsQuerySchema,
+  },
+  responses: {
+    200: {
+      description: "Paginated list of payments",
+      content: { "application/json": { schema: PaymentListResponseSchema } },
+    },
+  },
+});
+
+// --- Handlers ---
+
+app.openapi(authorizeRoute, async (c) => {
   const idempotencyKey = requireIdempotencyKey(c);
-  const raw = await c.req.json();
-  const parsed = AuthorizeSchema.safeParse(raw);
-
-  if (!parsed.success) {
-    throw new ValidationError("Request validation failed", {
-      fields: parsed.error.issues.map((i) => ({
-        field: i.path.join("."),
-        message: i.message,
-      })),
-    });
-  }
-
-  const body = parsed.data;
+  const body = c.req.valid("json");
 
   const result = await paymentService.authorize(
     db,
@@ -65,8 +253,7 @@ app.post("/api/v1/payments/authorize", async (c) => {
   return c.json(toPaymentResponse(result), 201);
 });
 
-// POST /api/v1/payments/:id/capture
-app.post("/api/v1/payments/:id/capture", async (c) => {
+app.openapi(captureRoute, async (c) => {
   const idempotencyKey = requireIdempotencyKey(c);
   const paymentId = c.req.param("id");
   const raw = await c.req.json().catch(() => ({}));
@@ -90,8 +277,7 @@ app.post("/api/v1/payments/:id/capture", async (c) => {
   return c.json(toPaymentResponse(result), 200);
 });
 
-// POST /api/v1/payments/:id/void
-app.post("/api/v1/payments/:id/void", async (c) => {
+app.openapi(voidRoute, async (c) => {
   const idempotencyKey = requireIdempotencyKey(c);
   const paymentId = c.req.param("id");
 
@@ -101,8 +287,7 @@ app.post("/api/v1/payments/:id/void", async (c) => {
   return c.json(toPaymentResponse(result), 200);
 });
 
-// POST /api/v1/payments/:id/settle
-app.post("/api/v1/payments/:id/settle", async (c) => {
+app.openapi(settleRoute, async (c) => {
   const idempotencyKey = requireIdempotencyKey(c);
   const paymentId = c.req.param("id");
 
@@ -112,8 +297,7 @@ app.post("/api/v1/payments/:id/settle", async (c) => {
   return c.json(toPaymentResponse(result), 200);
 });
 
-// POST /api/v1/payments/:id/refund
-app.post("/api/v1/payments/:id/refund", async (c) => {
+app.openapi(refundRoute, async (c) => {
   const idempotencyKey = requireIdempotencyKey(c);
   const paymentId = c.req.param("id");
   const raw = await c.req.json().catch(() => ({}));
@@ -137,18 +321,17 @@ app.post("/api/v1/payments/:id/refund", async (c) => {
   return c.json(toPaymentResponse(result), 200);
 });
 
-// GET /api/v1/payments/:id
-app.get("/api/v1/payments/:id", async (c) => {
+app.openapi(getPaymentRoute, async (c) => {
   const paymentId = c.req.param("id");
   const result = await paymentService.getPayment(db, paymentId);
   return c.json(toPaymentResponse(result), 200);
 });
 
-// GET /api/v1/payments
-app.get("/api/v1/payments", async (c) => {
-  const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
-  const cursor = c.req.query("cursor") || undefined;
-  const status = c.req.query("status") || undefined;
+app.openapi(listPaymentsRoute, async (c) => {
+  const query = c.req.valid("query");
+  const limit = query.limit ? Number(query.limit) : undefined;
+  const cursor = query.cursor || undefined;
+  const status = query.status || undefined;
 
   const result = await paymentService.listPayments(db, {
     limit,
