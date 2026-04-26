@@ -32,15 +32,15 @@ export async function createAuthorizedPayment(db: Database, overrides: PaymentOv
 export async function createCapturedPayment(db: Database, overrides: PaymentOverrides = {}) {
   const amount = overrides.authorizeAmount ?? overrides.amount ?? 10000n;
   const auth = await createAuthorizedPayment(db, { ...overrides, amount });
-  return paymentService.capture(db, auth.id, { amount });
+  return paymentService.capture(db, auth.id, { amount }, uniqueKey());
 }
 
 export async function createVoidedPayment(db: Database, overrides: PaymentOverrides = {}) {
   const auth = await createAuthorizedPayment(db, overrides);
-  return paymentService.void(db, auth.id);
+  return paymentService.void(db, auth.id, uniqueKey());
 }
 
 export async function createSettledPayment(db: Database, overrides: PaymentOverrides = {}) {
   const captured = await createCapturedPayment(db, overrides);
-  return paymentService.settle(db, captured.id);
+  return paymentService.settle(db, captured.id, uniqueKey());
 }

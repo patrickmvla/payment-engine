@@ -85,18 +85,32 @@ Transaction: "Capture $100 for Payment #PAY_001"
 ```
 
 **Key details:**
-- Can only capture what was authorized (no more)
-- Can capture partially (capture $70 of a $100 auth)
-- Partial capture releases the **entire** hold first, then charges only the
-  captured amount. The remaining $30 was never charged — no explicit "release"
-  transaction is needed for it.
+- Can only capture what was authorized (sum of captures ≤ authorized amount)
+- **Multi-capture:** A single authorization supports multiple partial
+  captures, accumulating until the auth is exhausted. Each capture call
+  posts its own ledger transaction. The state stays `captured` across
+  successive partial captures.
+- **Hold release fires once.** The first capture (when `captured_amount`
+  is still 0) releases the **entire** hold for `authorized_amount`.
+  Subsequent partial captures do NOT re-release; they only post the
+  customer→merchant and customer→fee transfers. After the first capture,
+  `customer_holds` for that payment is 0 and stays 0 regardless of how
+  many partial captures follow.
+- Capture validation: `capture_amount ≤ authorized_amount - already_captured`.
+  Calling capture without an explicit amount defaults to the remaining
+  authorized.
+- First capture has 6 entries (2 hold-release + 2 merchant + 2 fee) when
+  the fee is non-zero, or 4 entries when fee rounds to zero. Subsequent
+  captures have 4 entries (2 merchant + 2 fee), or 2 entries when fee
+  rounds to zero.
 - Once captured, the customer sees a real charge on their statement
-- Platform fee: **3%** of the captured amount, deducted from the customer and
-  credited to `platform_fees`. Configurable in application config.
+- Platform fee: **3%** of each capture's amount, deducted from the
+  customer and credited to `platform_fees`. Configurable in application
+  config.
 - **Zero-fee edge case:** If the captured amount is small enough that
   `amount × 3 / 100` truncates to zero (≤ 33 cents at 3%), the fee entries
-  are skipped. The capture transaction has 4 entries instead of 6, and the
-  full captured amount goes to `merchant_payable`.
+  for that capture are skipped. The full captured amount goes to
+  `merchant_payable`.
 
 ---
 
@@ -193,17 +207,37 @@ Transaction: "Refund $100 for Payment #PAY_001"
 
 ---
 
-### Partial Capture
+### Partial Capture (Multi-Capture)
 
-**When:** The merchant only wants to charge part of the authorized amount.
+**When:** The merchant only wants to charge part of the authorized amount,
+and may charge additional partial amounts later (split-shipment fulfillment,
+incremental delivery, etc.).
 
-**Example:** Auth was $100, but one item ($30) was out of stock.
+**Example:** Auth was $100. Merchant ships first item ($70) and charges,
+then ships second item ($30) and charges.
 
 ```
 Capture $70 of $100 authorization
-→ Customer is charged $70
-→ Remaining $30 hold is released automatically
+→ First capture: hold released in full, customer charged $70
+→ customer_holds for this payment = 0
+→ payment.captured_amount = $70, status = captured
+
+Capture $30 of remaining $30
+→ Second capture: NO hold release (already released)
+→ Customer charged $30 (merchant + fee entries only)
+→ payment.captured_amount = $100, status = captured
+
+→ Total ledger transactions for this payment so far: 2 capture txns
+  (plus 1 authorize txn).
 ```
+
+**Stopping early:** If the merchant captures $70 and never captures the
+remaining $30, the auth simply expires (after 7 days by default). The $30
+was never charged. No explicit "abandon remaining" call is required.
+
+**Validation:** `capture_amount ≤ authorized_amount - already_captured`.
+A capture call that would exceed the remaining is rejected with
+`invalid_amount` (HTTP 422).
 
 ---
 

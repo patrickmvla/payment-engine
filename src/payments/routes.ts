@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import { db } from "../shared/db";
 import { ValidationError } from "../shared/errors";
+import { toSafeNumber } from "../shared/money";
 import {
   AuthorizeSchema,
   CaptureSchema,
@@ -38,15 +39,18 @@ const app = new OpenAPIHono({
 });
 
 function toPaymentResponse(payment: PaymentRecord) {
+  // Per [[2026-04-26-amount-wire-format]]: assert bigint is within JS safe
+  // range BEFORE Number() conversion. Defends against silent precision
+  // loss if a future amount path exceeds 2^53 - 1.
   return {
     id: payment.id,
     object: "payment" as const,
     status: payment.status,
-    amount: Number(payment.amount),
+    amount: toSafeNumber(payment.amount),
     currency: payment.currency,
-    authorized_amount: Number(payment.authorizedAmount),
-    captured_amount: Number(payment.capturedAmount),
-    refunded_amount: Number(payment.refundedAmount),
+    authorized_amount: toSafeNumber(payment.authorizedAmount),
+    captured_amount: toSafeNumber(payment.capturedAmount),
+    refunded_amount: toSafeNumber(payment.refundedAmount),
     description: payment.description,
     metadata: payment.metadata,
     created_at: payment.createdAt.toISOString(),
@@ -271,7 +275,7 @@ app.openapi(captureRoute, async (c) => {
   const body = parsed.data;
   const captureParams = body.amount ? { amount: BigInt(body.amount) } : undefined;
 
-  const result = await paymentService.capture(db, paymentId, captureParams);
+  const result = await paymentService.capture(db, paymentId, captureParams, idempotencyKey);
 
   c.header("X-Idempotency-Key", idempotencyKey);
   return c.json(toPaymentResponse(result), 200);
@@ -281,7 +285,7 @@ app.openapi(voidRoute, async (c) => {
   const idempotencyKey = requireIdempotencyKey(c);
   const paymentId = c.req.param("id");
 
-  const result = await paymentService.void(db, paymentId);
+  const result = await paymentService.void(db, paymentId, idempotencyKey);
 
   c.header("X-Idempotency-Key", idempotencyKey);
   return c.json(toPaymentResponse(result), 200);
@@ -291,7 +295,7 @@ app.openapi(settleRoute, async (c) => {
   const idempotencyKey = requireIdempotencyKey(c);
   const paymentId = c.req.param("id");
 
-  const result = await paymentService.settle(db, paymentId);
+  const result = await paymentService.settle(db, paymentId, idempotencyKey);
 
   c.header("X-Idempotency-Key", idempotencyKey);
   return c.json(toPaymentResponse(result), 200);
@@ -313,9 +317,12 @@ app.openapi(refundRoute, async (c) => {
   }
 
   const body = parsed.data;
-  const refundParams = body.amount ? { amount: BigInt(body.amount), reason: body.reason } : undefined;
+  const refundParams =
+    body.amount || body.reason
+      ? { amount: body.amount ? BigInt(body.amount) : undefined, reason: body.reason }
+      : undefined;
 
-  const result = await paymentService.refund(db, paymentId, refundParams);
+  const result = await paymentService.refund(db, paymentId, refundParams, idempotencyKey);
 
   c.header("X-Idempotency-Key", idempotencyKey);
   return c.json(toPaymentResponse(result), 200);

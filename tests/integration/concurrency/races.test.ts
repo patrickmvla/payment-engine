@@ -1,6 +1,6 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { paymentService } from "../../../src/payments/service";
-import { createAuthorizedPayment, createCapturedPayment } from "../../helpers/factories";
+import { createAuthorizedPayment, createCapturedPayment , uniqueKey } from "../../helpers/factories";
 import { verifySystemBalance } from "../../helpers/god-check";
 import { cleanBetweenTests, getTestSQL, setupTestDB, teardownTestDB } from "../../helpers/setup";
 
@@ -22,8 +22,8 @@ describe("concurrency: double capture", () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
 
     const results = await Promise.allSettled([
-      paymentService.capture(db, auth.id, { amount: 10000n }),
-      paymentService.capture(db, auth.id, { amount: 10000n }),
+      paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey()),
+      paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey()),
     ]);
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -36,7 +36,7 @@ describe("concurrency: double capture", () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
 
     const results = await Promise.allSettled(
-      Array.from({ length: 5 }, () => paymentService.capture(db, auth.id, { amount: 10000n })),
+      Array.from({ length: 5 }, () => paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey())),
     );
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -47,8 +47,8 @@ describe("concurrency: double capture", () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
 
     await Promise.allSettled([
-      paymentService.capture(db, auth.id, { amount: 10000n }),
-      paymentService.capture(db, auth.id, { amount: 10000n }),
+      paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey()),
+      paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey()),
     ]);
 
     const payment = await paymentService.getPayment(db, auth.id);
@@ -62,8 +62,8 @@ describe("concurrency: double settlement", () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
 
     const results = await Promise.allSettled([
-      paymentService.settle(db, captured.id),
-      paymentService.settle(db, captured.id),
+      paymentService.settle(db, captured.id, uniqueKey()),
+      paymentService.settle(db, captured.id, uniqueKey()),
     ]);
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -78,8 +78,8 @@ describe("concurrency: capture vs void race", () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
 
     const results = await Promise.allSettled([
-      paymentService.capture(db, auth.id, { amount: 10000n }),
-      paymentService.void(db, auth.id),
+      paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey()),
+      paymentService.void(db, auth.id, uniqueKey()),
     ]);
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -90,8 +90,8 @@ describe("concurrency: capture vs void race", () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
 
     await Promise.allSettled([
-      paymentService.capture(db, auth.id, { amount: 10000n }),
-      paymentService.void(db, auth.id),
+      paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey()),
+      paymentService.void(db, auth.id, uniqueKey()),
     ]);
 
     const payment = await paymentService.getPayment(db, auth.id);
@@ -102,8 +102,8 @@ describe("concurrency: capture vs void race", () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
 
     await Promise.allSettled([
-      paymentService.capture(db, auth.id, { amount: 10000n }),
-      paymentService.void(db, auth.id),
+      paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey()),
+      paymentService.void(db, auth.id, uniqueKey()),
     ]);
 
     await verifySystemBalance(getTestSQL());
@@ -115,8 +115,8 @@ describe("concurrency: refund races", () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
 
     const results = await Promise.allSettled([
-      paymentService.refund(db, captured.id, { amount: 10000n }),
-      paymentService.refund(db, captured.id, { amount: 10000n }),
+      paymentService.refund(db, captured.id, { amount: 10000n }, uniqueKey()),
+      paymentService.refund(db, captured.id, { amount: 10000n }, uniqueKey()),
     ]);
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -130,9 +130,9 @@ describe("concurrency: refund races", () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
 
     const results = await Promise.allSettled([
-      paymentService.refund(db, captured.id, { amount: 7000n }),
-      paymentService.refund(db, captured.id, { amount: 7000n }),
-      paymentService.refund(db, captured.id, { amount: 7000n }),
+      paymentService.refund(db, captured.id, { amount: 7000n }, uniqueKey()),
+      paymentService.refund(db, captured.id, { amount: 7000n }, uniqueKey()),
+      paymentService.refund(db, captured.id, { amount: 7000n }, uniqueKey()),
     ]);
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -146,7 +146,7 @@ describe("concurrency: refund races", () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
 
     const results = await Promise.allSettled(
-      Array.from({ length: 10 }, () => paymentService.refund(db, captured.id, { amount: 2000n })),
+      Array.from({ length: 10 }, () => paymentService.refund(db, captured.id, { amount: 2000n }, uniqueKey())),
     );
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -161,9 +161,9 @@ describe("concurrency: refund races", () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
 
     await Promise.allSettled([
-      paymentService.refund(db, captured.id, { amount: 5000n }),
-      paymentService.refund(db, captured.id, { amount: 5000n }),
-      paymentService.refund(db, captured.id, { amount: 5000n }),
+      paymentService.refund(db, captured.id, { amount: 5000n }, uniqueKey()),
+      paymentService.refund(db, captured.id, { amount: 5000n }, uniqueKey()),
+      paymentService.refund(db, captured.id, { amount: 5000n }, uniqueKey()),
     ]);
 
     await verifySystemBalance(getTestSQL());
@@ -205,10 +205,10 @@ describe("concurrency: mixed chaos", () => {
     const captured1 = await createCapturedPayment(db, { authorizeAmount: 30000n });
 
     await Promise.allSettled([
-      paymentService.capture(db, auth1.id, { amount: 10000n }),
-      paymentService.void(db, auth2.id),
-      paymentService.capture(db, auth3.id, { amount: 15000n }),
-      paymentService.refund(db, captured1.id, { amount: 10000n }),
+      paymentService.capture(db, auth1.id, { amount: 10000n }, uniqueKey()),
+      paymentService.void(db, auth2.id, uniqueKey()),
+      paymentService.capture(db, auth3.id, { amount: 15000n }, uniqueKey()),
+      paymentService.refund(db, captured1.id, { amount: 10000n }, uniqueKey()),
     ]);
 
     await verifySystemBalance(getTestSQL());
@@ -219,10 +219,10 @@ describe("concurrency: mixed chaos", () => {
     const auth2 = await createAuthorizedPayment(db, { amount: 20000n });
 
     await Promise.allSettled([
-      paymentService.capture(db, auth1.id, { amount: 10000n }),
-      paymentService.void(db, auth2.id),
-      paymentService.capture(db, auth1.id, { amount: 10000n }),
-      paymentService.void(db, auth2.id),
+      paymentService.capture(db, auth1.id, { amount: 10000n }, uniqueKey()),
+      paymentService.void(db, auth2.id, uniqueKey()),
+      paymentService.capture(db, auth1.id, { amount: 10000n }, uniqueKey()),
+      paymentService.void(db, auth2.id, uniqueKey()),
     ]);
 
     await verifySystemBalance(getTestSQL());
@@ -238,8 +238,8 @@ describe("concurrency: mixed chaos", () => {
     await Promise.allSettled(
       payments.map((p, i) =>
         i % 2 === 0
-          ? paymentService.capture(db, p.id, { amount: p.amount })
-          : paymentService.void(db, p.id),
+          ? paymentService.capture(db, p.id, { amount: p.amount }, uniqueKey())
+          : paymentService.void(db, p.id, uniqueKey()),
       ),
     );
 

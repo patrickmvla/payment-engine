@@ -32,8 +32,8 @@ export async function setupTestDB() {
   const ssl = process.env.DATABASE_SSL === "true";
 
   sql = postgres(testUrl, {
-    max: 5,
-    idle_timeout: 10,
+    max: 1,
+    idle_timeout: 20,
     connect_timeout: 30,
     prepare: false,
     ssl: ssl ? "require" : false,

@@ -1,8 +1,8 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { ledgerService } from "../../../src/ledger/service";
 import { paymentService } from "../../../src/payments/service";
-import { createAuthorizedPayment, createCapturedPayment } from "../../helpers/factories";
+import { createAuthorizedPayment, createCapturedPayment , uniqueKey } from "../../helpers/factories";
 import { verifySystemBalance } from "../../helpers/god-check";
 import { cleanBetweenTests, getTestSQL, setupTestDB, teardownTestDB } from "../../helpers/setup";
 
@@ -23,13 +23,13 @@ describe("account integrity", () => {
   it("every account service balance matches raw SQL computation", async () => {
     // Create diverse operations
     const auth1 = await createAuthorizedPayment(db, { amount: 10000n });
-    await paymentService.capture(db, auth1.id);
+    await paymentService.capture(db, auth1.id, undefined, uniqueKey());
 
     const auth2 = await createAuthorizedPayment(db, { amount: 20000n });
-    await paymentService.void(db, auth2.id);
+    await paymentService.void(db, auth2.id, uniqueKey());
 
     const captured3 = await createCapturedPayment(db, { authorizeAmount: 15000n });
-    await paymentService.refund(db, captured3.id, { amount: 5000n });
+    await paymentService.refund(db, captured3.id, { amount: 5000n }, uniqueKey());
 
     // Account types: asset/expense = debit-normal, liability/revenue = credit-normal
     const accountConfigs = [

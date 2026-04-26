@@ -36,3 +36,6 @@ drizzle/meta
 
 # OS
 .DS_Store
+
+# local tooling (Bocek mode commands, session lock, backups; auto-regenerated)
+.claude/

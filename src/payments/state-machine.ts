@@ -9,9 +9,12 @@ export type PaymentStatus =
   | "partially_refunded";
 
 const TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
-  created: ["authorized", "expired"],
+  created: ["authorized"],
   authorized: ["captured", "voided", "expired"],
-  captured: ["settled", "refunded", "partially_refunded"],
+  // Multi-capture per [[2026-04-26-multi-capture-model]]: a single auth
+  // supports multiple partial captures, accumulating until the auth is
+  // exhausted. The state stays "captured" across each call.
+  captured: ["captured", "settled", "refunded", "partially_refunded"],
   settled: ["refunded", "partially_refunded"],
   voided: [],
   expired: [],

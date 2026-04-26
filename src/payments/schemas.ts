@@ -29,9 +29,19 @@ const PaymentStatusEnum = z.enum([
 
 // --- Request schemas ---
 
+/**
+ * Per-payment amount cap, in smallest currency units (cents for USD).
+ * 99,999,999 cents = $999,999.99 — matches Stripe's documented per-charge
+ * ceiling exactly. Per [[2026-04-26-amount-wire-format]], this stays well
+ * below `Number.MAX_SAFE_INTEGER / 10` to leave headroom against the JSON
+ * Number precision boundary (~9.007 × 10^15 cents). A property test in
+ * `tests/unit/money.test.ts` enforces that bound.
+ */
+export const MAX_AMOUNT_CENTS = 99_999_999;
+
 export const AuthorizeSchema = z
   .object({
-    amount: z.number().int().positive().max(99999999).openapi({
+    amount: z.number().int().positive().max(MAX_AMOUNT_CENTS).openapi({
       example: 5000,
       description: "Amount in smallest currency unit (e.g. cents)",
     }),

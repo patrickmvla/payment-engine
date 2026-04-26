@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import { eq } from "drizzle-orm";
 import { db } from "../shared/db";
 import { ValidationError } from "../shared/errors";
+import { toSafeNumber } from "../shared/money";
 import {
   AccountBalanceResponseSchema,
   AccountIdParamSchema,
@@ -94,7 +95,7 @@ app.openapi(paymentLedgerRoute, async (c) => {
           id: e.id,
           account: e.accountId,
           direction: e.direction,
-          amount: Number(e.amount),
+          amount: toSafeNumber(e.amount),
         })),
       })),
     },
@@ -123,7 +124,7 @@ app.openapi(accountBalanceRoute, async (c) => {
       account_name: account.name,
       account_type: account.type,
       currency: account.currency,
-      balance: Number(balance),
+      balance: toSafeNumber(balance),
       as_of: new Date().toISOString(),
     },
     200,

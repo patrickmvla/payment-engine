@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
+import { MAX_AMOUNT_CENTS } from "../../src/payments/schemas";
 import {
   addAmounts,
   CURRENCY_DECIMALS,
@@ -7,6 +8,7 @@ import {
   isWithinSafeRange,
   subtractAmounts,
   toMinorUnits,
+  toSafeNumber,
 } from "../../src/shared/money";
 
 // ─────────────────────────────────────────────────────────────
@@ -216,5 +218,51 @@ describe("Division with Remainder", () => {
     expect(result.quotient).toBe(1n);
     expect(result.remainder).toBe(3n);
     expect(result.quotient * 4n + result.remainder).toBe(7n);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Wire-format guards per [[2026-04-26-amount-wire-format]]
+// Defense against silent precision loss when serializing BigInt → Number.
+// ─────────────────────────────────────────────────────────────
+
+describe("wire-format guards: input cap and serializer assertion", () => {
+  it("MAX_AMOUNT_CENTS stays well below the JS Number safe boundary", () => {
+    // The vault decision pins the input cap at 99,999,999 cents (~$999K),
+    // matching Stripe's per-charge ceiling. The cap MUST stay below
+    // Number.MAX_SAFE_INTEGER / 10 so that aggregate sums (e.g.
+    // customer_funds across many payments) have headroom against the
+    // Number precision boundary at 2^53 - 1. If this test fails, someone
+    // raised the cap — read [[2026-04-26-amount-wire-format]]'s "Revisit
+    // when" section before adjusting this guard.
+    const safetyBoundary = Number.MAX_SAFE_INTEGER / 10;
+    expect(MAX_AMOUNT_CENTS).toBeLessThan(safetyBoundary);
+  });
+
+  it("toSafeNumber converts a typical money amount", () => {
+    expect(toSafeNumber(10_000n)).toBe(10_000);
+    expect(toSafeNumber(0n)).toBe(0);
+    expect(toSafeNumber(BigInt(MAX_AMOUNT_CENTS))).toBe(MAX_AMOUNT_CENTS);
+  });
+
+  it("toSafeNumber accepts values up to Number.MAX_SAFE_INTEGER", () => {
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    expect(toSafeNumber(max)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(toSafeNumber(-max)).toBe(-Number.MAX_SAFE_INTEGER);
+  });
+
+  it("toSafeNumber throws on values exceeding MAX_SAFE_INTEGER", () => {
+    const tooBig = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+    expect(() => toSafeNumber(tooBig)).toThrow(/exceeds Number\.MAX_SAFE_INTEGER/);
+  });
+
+  it("toSafeNumber throws on negative values exceeding range", () => {
+    const tooNegative = -(BigInt(Number.MAX_SAFE_INTEGER) + 1n);
+    expect(() => toSafeNumber(tooNegative)).toThrow(/exceeds Number\.MAX_SAFE_INTEGER/);
+  });
+
+  it("toSafeNumber throws with diagnostic message including the value", () => {
+    const tooBig = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+    expect(() => toSafeNumber(tooBig)).toThrow(new RegExp(tooBig.toString()));
   });
 });

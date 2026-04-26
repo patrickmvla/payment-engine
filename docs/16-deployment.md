@@ -1,16 +1,63 @@
 # Deployment — Putting It on a Real URL
 
-An API running on `localhost:3000` is a homework assignment. An API running on
-`https://payments.yourdomain.com` with TLS, health checks, and zero-downtime
-deploys is a product. This document covers how we get from one to the other.
-
-The payment engine runs on **Fly.io** with **Supabase** as the managed
-PostgreSQL backend. One provider hosts compute, the other hosts data. Neither
-touches the other's job.
+> **STATUS (2026-04-26): SUPERSEDED — compute platform changed from
+> Fly.io to Railway.** The deployment platform decision was revised after
+> this doc was written. The current plan uses **Railway Hobby ($5/mo, EU
+> region)** for compute; Supabase for the database stays unchanged.
+> See `[[2026-04-26-deployment-platform-railway]]` for the full decision
+> rationale and rejected alternatives.
+>
+> The Fly.io content below is preserved for reference because most of its
+> reasoning (always-on, Docker-native, region co-location with Supabase,
+> separation of compute from storage, health-check pattern, cost
+> sensitivity) carries over directly to Railway. The deltas vs the
+> original plan are isolated to platform-specific commands and config.
+>
+> ## Current plan (Railway, 2026-04-26)
+>
+> - **Compute:** Railway Hobby plan, $5/mo, EU region matched to Supabase
+>   EU-West-1
+> - **Database:** Supabase (unchanged from this doc's plan)
+> - **Connection strategy:** direct port 5432, NOT pooled 6543
+>   (unchanged — see `docs/13-database-connection-strategy.md`)
+> - **Build artifact:** the Dockerfile this doc specifies (Section 3)
+>   builds on Railway without modification. Railway auto-detects Bun
+>   apps via `package.json` and runs `bun run start`; the Dockerfile is
+>   used when present.
+> - **Deploy command:** `railway up` (CLI) or git-integration auto-deploy
+>   (replaces `fly deploy`).
+> - **Secrets:** Railway env vars dashboard or `railway variables set`
+>   (replaces `fly secrets set`).
+> - **Health check:** Railway's health-check config points at `GET /health`
+>   (the endpoint specified in Section 6 below — unchanged).
+> - **Region pinning:** select Railway's EU region at deploy time to match
+>   Supabase EU-West-1.
+> - **Custom domain + TLS:** included; Railway provides Let's Encrypt
+>   certs the same way Fly.io did.
+>
+> Why Railway over Fly.io for this engine specifically: the engine owner
+> already has a Railway $5/mo plan; sunk-cost-as-current-cost makes Fly's
+> ~$3.50/mo trivially worse. The engine's traffic profile (portfolio-demo
+> volume) is well below Railway's "burns credit" concern threshold. EU
+> region match resolves the latency caveat that would otherwise penalize
+> Railway vs Fly's region-co-location.
+>
+> Rejected alternatives in addition to Fly.io:
+> - **Vercel** — wrong runtime model for this stateful API (serverless
+>   breaks pessimistic locking + connection pool exhaustion). Per
+>   `docs/13`. Confirmed in `[[2026-04-26-hiring-manager-portfolio-evidence]]`.
+> - **Render free tier** — sleeps after 15 min idle; cold start during a
+>   recruiter click defeats the point.
+> - **Oracle Cloud Free Tier** — genuinely free + always-on but more ops
+>   burden (TLS via Caddy/Traefik, OS updates, manual secret management).
+>   Worth the trade only if Railway's $5 isn't workable.
+> - **Hetzner / DO / Vultr VPS** — cheaper, but you become the platform.
+>   Engine owner is already paying Railway; paying twice for ops
+>   simplicity is wrong shape.
 
 ---
 
-## 1. Why Fly.io
+## 1. Why Fly.io  *(historical — superseded by Railway above)*
 
 We evaluated four hosting options. The decision comes down to three
 requirements: always-on (no cold starts during a CTO demo), Docker-native (Bun

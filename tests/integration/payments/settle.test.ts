@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ledgerService } from "../../../src/ledger/service";
 import { paymentService } from "../../../src/payments/service";
 import { assertEntriesBalance } from "../../helpers/assertions";
@@ -6,6 +6,7 @@ import {
   createAuthorizedPayment,
   createCapturedPayment,
   createVoidedPayment,
+  uniqueKey,
 } from "../../helpers/factories";
 import { verifySystemBalance } from "../../helpers/god-check";
 import { cleanBetweenTests, getTestSQL, setupTestDB, teardownTestDB } from "../../helpers/setup";
@@ -26,14 +27,14 @@ afterEach(async () => {
 describe("settle", () => {
   it("transitions payment to settled status", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    const settled = await paymentService.settle(db, captured.id);
+    const settled = await paymentService.settle(db, captured.id, uniqueKey());
 
     expect(settled.status).toBe("settled");
   });
 
   it("creates correct ledger entries (DEBIT merchant_payable, CREDIT platform_cash)", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    await paymentService.settle(db, captured.id);
+    await paymentService.settle(db, captured.id, uniqueKey());
 
     const transactions = await ledgerService.getTransactionsByReference(db, "payment", captured.id);
     const settleTxn = transactions.find((t) => t.description.toLowerCase().includes("settle"));
@@ -49,7 +50,7 @@ describe("settle", () => {
 
   it("settlement amount equals captured minus fee (merchant_share)", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    await paymentService.settle(db, captured.id);
+    await paymentService.settle(db, captured.id, uniqueKey());
 
     const fee = (10000n * 3n) / 100n;
     const merchantShare = 10000n - fee;
@@ -66,7 +67,7 @@ describe("settle", () => {
     const balanceBefore = await ledgerService.getBalance(db, "merchant_payable");
     expect(balanceBefore).toBeGreaterThan(0n);
 
-    await paymentService.settle(db, captured.id);
+    await paymentService.settle(db, captured.id, uniqueKey());
 
     const balanceAfter = await ledgerService.getBalance(db, "merchant_payable");
     expect(balanceAfter).toBe(0n);
@@ -74,7 +75,7 @@ describe("settle", () => {
 
   it("records outflow in platform_cash (negative asset balance)", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    await paymentService.settle(db, captured.id);
+    await paymentService.settle(db, captured.id, uniqueKey());
 
     const fee = (10000n * 3n) / 100n;
     const merchantShare = 10000n - fee;
@@ -86,7 +87,7 @@ describe("settle", () => {
   it("rejects settling an authorized (not captured) payment", async () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
 
-    const err = await paymentService.settle(db, auth.id).catch((e) => e);
+    const err = await paymentService.settle(db, auth.id, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/authorized|state|transition|captured/i);
@@ -94,9 +95,9 @@ describe("settle", () => {
 
   it("rejects settling an already settled payment", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    await paymentService.settle(db, captured.id);
+    await paymentService.settle(db, captured.id, uniqueKey());
 
-    const err = await paymentService.settle(db, captured.id).catch((e) => e);
+    const err = await paymentService.settle(db, captured.id, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/settled|state|already/i);
@@ -105,14 +106,14 @@ describe("settle", () => {
   it("rejects settling a voided payment", async () => {
     const voided = await createVoidedPayment(db);
 
-    const err = await paymentService.settle(db, voided.id).catch((e) => e);
+    const err = await paymentService.settle(db, voided.id, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/void|state|transition/i);
   });
 
   it("rejects settling a non-existent payment", async () => {
-    const err = await paymentService.settle(db, "pay_nonexistent_00000000").catch((e) => e);
+    const err = await paymentService.settle(db, "pay_nonexistent_00000000", uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/not found|exist/i);
@@ -120,9 +121,9 @@ describe("settle", () => {
 
   it("refund after settlement is allowed and transitions correctly", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    await paymentService.settle(db, captured.id);
+    await paymentService.settle(db, captured.id, uniqueKey());
 
-    const refunded = await paymentService.refund(db, captured.id, { amount: 10000n });
+    const refunded = await paymentService.refund(db, captured.id, { amount: 10000n }, uniqueKey());
     expect(refunded.status).toBe("refunded");
     expect(refunded.refundedAmount).toBe(10000n);
   });

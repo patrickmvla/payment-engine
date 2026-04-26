@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import {
   getValidTransitions,
   InvalidStateTransitionError,
@@ -25,13 +25,15 @@ const STATES: PaymentStatus[] = [
 
 describe("State Machine — 8×8 Transition Matrix", () => {
   const VALID: Record<PaymentStatus, Record<PaymentStatus, boolean>> = {
+    // Per docs/06-invariants.md §3 note: `created` is transient within the
+    // authorize transaction; only `authorized` payments can expire.
     created: {
       created: false,
       authorized: true,
       captured: false,
       settled: false,
       voided: false,
-      expired: true,
+      expired: false,
       refunded: false,
       partially_refunded: false,
     },
@@ -45,10 +47,12 @@ describe("State Machine — 8×8 Transition Matrix", () => {
       refunded: false,
       partially_refunded: false,
     },
+    // Multi-capture per [[2026-04-26-multi-capture-model]]: captured →
+    // captured is valid (accumulating partial captures within one auth).
     captured: {
       created: false,
       authorized: false,
-      captured: false,
+      captured: true,
       settled: true,
       voided: false,
       expired: false,
@@ -126,11 +130,10 @@ describe("State Machine — 8×8 Transition Matrix", () => {
 // ─────────────────────────────────────────────────────────────
 
 describe("State Machine — getValidTransitions", () => {
-  it("created → [authorized, expired]", () => {
+  it("created → [authorized]", () => {
     const valid = getValidTransitions("created");
     expect(valid).toContain("authorized");
-    expect(valid).toContain("expired");
-    expect(valid).toHaveLength(2);
+    expect(valid).toHaveLength(1);
   });
 
   it("authorized → [captured, voided, expired]", () => {
@@ -141,12 +144,13 @@ describe("State Machine — getValidTransitions", () => {
     expect(valid).toHaveLength(3);
   });
 
-  it("captured → [settled, refunded, partially_refunded]", () => {
+  it("captured → [captured, settled, refunded, partially_refunded]", () => {
     const valid = getValidTransitions("captured");
+    expect(valid).toContain("captured");
     expect(valid).toContain("settled");
     expect(valid).toContain("refunded");
     expect(valid).toContain("partially_refunded");
-    expect(valid).toHaveLength(3);
+    expect(valid).toHaveLength(4);
   });
 
   it("settled → [refunded, partially_refunded]", () => {
@@ -197,7 +201,7 @@ describe("State Machine — Error Diagnostics", () => {
   it("InvalidStateTransitionError is an instance of Error", () => {
     try {
       validateTransition("created", "captured");
-      expect.unreachable("should have thrown");
+      expect.fail("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(InvalidStateTransitionError);
       expect(err).toBeInstanceOf(Error);
@@ -207,7 +211,7 @@ describe("State Machine — Error Diagnostics", () => {
   it("error carries .from property", () => {
     try {
       validateTransition("created", "captured");
-      expect.unreachable("should have thrown");
+      expect.fail("should have thrown");
     } catch (err) {
       expect((err as InvalidStateTransitionError).from).toBe("created");
     }
@@ -216,7 +220,7 @@ describe("State Machine — Error Diagnostics", () => {
   it("error carries .to property", () => {
     try {
       validateTransition("created", "captured");
-      expect.unreachable("should have thrown");
+      expect.fail("should have thrown");
     } catch (err) {
       expect((err as InvalidStateTransitionError).to).toBe("captured");
     }
@@ -225,19 +229,19 @@ describe("State Machine — Error Diagnostics", () => {
   it("error carries .allowedTransitions array", () => {
     try {
       validateTransition("created", "captured");
-      expect.unreachable("should have thrown");
+      expect.fail("should have thrown");
     } catch (err) {
       const allowed = (err as InvalidStateTransitionError).allowedTransitions;
       expect(Array.isArray(allowed)).toBe(true);
       expect(allowed).toContain("authorized");
-      expect(allowed).toContain("expired");
+      expect(allowed).toHaveLength(1);
     }
   });
 
   it("error .message is human-readable and includes context", () => {
     try {
       validateTransition("settled", "authorized");
-      expect.unreachable("should have thrown");
+      expect.fail("should have thrown");
     } catch (err) {
       const msg = (err as InvalidStateTransitionError).message;
       expect(msg).toContain("settled");

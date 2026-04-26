@@ -98,9 +98,15 @@ Creates a new payment and authorizes (holds) the funds.
 **Errors:**
 | Status | When |
 |---|---|
-| 400 | Invalid input (missing fields, bad currency, negative amount) |
+| 400 | Invalid input (missing fields, bad currency, zero or negative amount) |
 | 409 | Idempotency key already used with different parameters |
-| 422 | Amount is zero or negative |
+
+The `amount` field is rejected at the schema layer (`z.number().int().positive()`)
+for zero or negative values, producing a 400 `validation_error`. 422
+`invalid_amount` is reserved for runtime business-rule violations
+(capture > authorized, refund > captured) where the request is
+schema-valid but violates state-dependent constraints. See
+[[2026-04-26-amount-validation-status-code]].
 
 ---
 

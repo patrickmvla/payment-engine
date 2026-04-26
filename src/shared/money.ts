@@ -56,6 +56,28 @@ export function isWithinSafeRange(value: bigint): boolean {
   return value >= -max && value <= max;
 }
 
+/**
+ * Convert a BigInt to Number for JSON wire format, asserting the value is
+ * within JS safe-integer range (|value| <= 2^53 - 1) FIRST. Used at the
+ * response-serialization boundary per [[2026-04-26-amount-wire-format]] to
+ * defend against silent precision loss if a future BigInt amount somehow
+ * exceeds Number.MAX_SAFE_INTEGER.
+ *
+ * Throws if the value is out of range — this is an invariant violation,
+ * not a user error. The caller should not catch this; it should bubble up
+ * to the global error handler as a 500.
+ */
+export function toSafeNumber(value: bigint): number {
+  if (!isWithinSafeRange(value)) {
+    throw new Error(
+      `BigInt ${value} exceeds Number.MAX_SAFE_INTEGER; ` +
+        `cannot serialize without precision loss. This is a code bug — ` +
+        `verify the input cap (MAX_AMOUNT_CENTS) and aggregate sums.`,
+    );
+  }
+  return Number(value);
+}
+
 /** Convert a dollar amount to cents. For testing convenience only. */
 export function toCents(dollars: number): bigint {
   return BigInt(Math.round(dollars * 100));
