@@ -1,6 +1,6 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { paymentService } from "../../../src/payments/service";
-import { createAuthorizedPayment, createCapturedPayment } from "../../helpers/factories";
+import { createAuthorizedPayment, createCapturedPayment , uniqueKey } from "../../helpers/factories";
 import { verifySystemBalance } from "../../helpers/god-check";
 import { cleanBetweenTests, getTestSQL, setupTestDB, teardownTestDB } from "../../helpers/setup";
 
@@ -40,7 +40,7 @@ describe("payment queries — single retrieval", () => {
 
   it("reflects current state after operations", async () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
-    await paymentService.capture(db, auth.id, { amount: 10000n });
+    await paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey());
 
     const payment = await paymentService.getPayment(db, auth.id);
     expect(payment.status).toBe("captured");
@@ -49,8 +49,8 @@ describe("payment queries — single retrieval", () => {
 
   it("all amount fields are present after full lifecycle", async () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
-    const captured = await paymentService.capture(db, auth.id, { amount: 10000n });
-    await paymentService.refund(db, captured.id, { amount: 3000n });
+    const captured = await paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey());
+    await paymentService.refund(db, captured.id, { amount: 3000n }, uniqueKey());
 
     const payment = await paymentService.getPayment(db, captured.id);
     expect(payment.authorizedAmount).toBe(10000n);

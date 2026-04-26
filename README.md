@@ -1,25 +1,76 @@
 # Payment Engine
 
-A production-grade payment processing engine with a double-entry ledger system.
-Built from the ground up to demonstrate how money actually moves in fintech.
+> A production-grade payment processor with a double-entry ledger.
+> Authorize → capture → settle → refund, every cent balanced, every retry safe.
 
-Part of the **god-complex** project collection.
+```
+✓ 447 tests passing      unit · integration · e2e · property · fuzz · reconciliation
+✓ ~3000 expect() calls   covering every invariant the spec defines
+✓ God check after every  integration test: SUM(debits) === SUM(credits) — always
+✓ BigInt money throughout zero floating-point arithmetic in the money path
+✓ Race-safe idempotency  retry-deduplicates across all 5 mutation endpoints
+✓ Multi-capture model    one auth, N partial captures, hold released once
+✓ 7 documented decisions  in .bocek/vault/, each with rejected alternatives
+```
+
+**Live API:** `pending Railway deploy — see `[[2026-04-26-deployment-platform-railway]]``
+**Walkthrough video:** `pending recording — see `[[2026-04-26-loom-walkthrough-content]]``
+**GitHub:** you're here.
 
 ---
 
 ## What This Is
 
-A payment processor that handles the full payment lifecycle — authorization,
-capture, refund, void — backed by a double-entry accounting ledger that tracks
-every cent with an immutable audit trail.
+A payment processor that handles the full payment lifecycle — authorize,
+capture, settle, refund, void — backed by a double-entry accounting ledger
+that tracks every cent with an immutable audit trail.
 
 This is not a toy. It implements the same patterns used by Stripe, Adyen, and
 Square internally:
 - Double-entry bookkeeping with balanced transactions
-- Idempotent API operations (safe to retry)
-- Pessimistic locking for concurrent safety
-- State machine for payment lifecycle
-- Integer-based money (no floating point)
+- Idempotent API operations (safe to retry under network failure)
+- Pessimistic locking for concurrent safety (`SELECT ... FOR UPDATE`)
+- State machine for payment lifecycle (8 states, 13 valid transitions)
+- Integer-based money (no floating point, BigInt throughout)
+- Multi-capture authorization (split-shipment / incremental fulfillment)
+- Per-payment witness reconciliation (independent ledger replay)
+
+## Hardest bug found and fixed: partial-refund double-refund
+
+During a code review against the spec, I noticed `paymentService.refund`
+accepted an `Idempotency-Key` header at the route layer but never threaded
+it through to the service. The route required the key. The service ignored
+it. Same was true for capture, void, and settle.
+
+The state machine allows `partially_refunded → partially_refunded` —
+necessary because real merchants issue multiple partial refunds against
+one capture (item-by-item return). Without idempotency, a network retry of
+a successful partial refund could **double-refund**: the second call would
+see the payment in `partially_refunded` state, validate that
+`refundedAmount + retryAmount ≤ capturedAmount`, and execute again —
+issuing a second ledger transaction debiting `merchant_payable`. Real
+money out, twice, with no error to the client.
+
+The fix, in TDD order:
+
+1. **Wrote 4 failing tests** asserting the idempotency contract (RED):
+   same-key retry returns identical refund, no extra ledger entries,
+   full-refund retry returns original 200, different-amount-same-key
+   returns 409.
+2. **Built a race-safe idempotency claim helper** at
+   `src/shared/idempotency.ts` using `INSERT ... ON CONFLICT DO NOTHING
+   RETURNING` — atomic claim, no TOCTOU window.
+3. **Wired the key through every mutation** (refund, capture, void,
+   settle) — signature changes across ~80 call sites in tests + factories.
+4. **All 4 tests turned GREEN.** Full suite confirmed no regressions.
+
+The same audit added 12 retry tests covering all 4 mutations and replaced
+4 vacuous "retry" tests that never actually retried (test theater — they
+passed by accident, not by validating the contract).
+
+The decision and the rejected alternatives are recorded at
+`.bocek/vault/2026-04-26-multi-capture-model.md` and
+`.bocek/vault/2026-04-26-vitest-migration.md`.
 
 ## Stack
 
@@ -31,7 +82,7 @@ Square internally:
 | ORM | Drizzle |
 | Validation | Zod (also generates OpenAPI 3.1 spec) |
 | API Docs | Scalar (served at `/docs`) |
-| Testing | bun:test |
+| Testing | Vitest (correctness) + `vitest bench` (perf, in `bench/`) |
 
 ### Database Strategy
 
@@ -68,8 +119,8 @@ Read these in order. Each document builds on the previous one.
 | 12 | [Glossary](./docs/12-glossary.md) | Every financial and technical term defined |
 | 13 | [Database Connection Strategy](./docs/13-database-connection-strategy.md) | Connection architecture, pool sizing, isolation levels, resilience, environment guardrails |
 | 14 | [Development Flow](./docs/14-development-flow.md) | TDD inside-out methodology, phase gates, dependency graph, the rules |
-| 15 | [Demo & Presentation](./docs/15-demo-and-presentation.md) | 5-minute CTO demo structure, CLI harness, what to show and what not to |
-| 16 | [Deployment](./docs/16-deployment.md) | Fly.io hosting, Dockerfile, health checks, secrets, CI/CD, cost breakdown |
+| 15 | [Demo & Presentation](./docs/15-demo-and-presentation.md) | *(superseded — see `.bocek/vault/2026-04-26-loom-walkthrough-content.md`)* |
+| 16 | [Deployment](./docs/16-deployment.md) | **Railway** + Supabase (supersedes Fly.io), Dockerfile, health checks, secrets, region pinning |
 | 17 | [CI/CD](./docs/17-ci-cd.md) | GitHub Actions pipeline, test execution order, god check as deployment gate, branch protection |
 | 18 | [Accounting Model](./docs/18-accounting-model.md) | Industry comparison (Stripe, TigerBeetle, Modern Treasury), complete money flow trace, fee model, edge cases |
 
@@ -106,18 +157,22 @@ payment-engine/
 │   ├── unit/                  # Pure logic, no database
 │   ├── integration/           # Service + real Postgres
 │   │   ├── ledger/            # Ledger operations
-│   │   ├── payments/          # Payment lifecycle
+│   │   ├── payments/          # Payment lifecycle (incl. multi-capture, idempotency)
 │   │   ├── concurrency/       # Race conditions, locks
 │   │   └── invariants/        # God check, constraints
-│   ├── e2e/                   # Full HTTP via Hono RPC
-│   ├── load/                  # Throughput + correctness
-│   ├── property/              # Random operation sequences
-│   ├── reconciliation/        # Audit trail + witness test
+│   ├── e2e/                   # Full HTTP via @hono/node-server
+│   ├── property/              # Seeded random operation sequences
+│   ├── reconciliation/        # Audit trail + witness reconstruction
 │   ├── fuzz/                  # Validation boundary testing
-│   └── helpers/               # Setup, factories, god check
-├── docs/
-├── drizzle/
-└── docker-compose.yml
+│   ├── failure/               # Connection drops, slow queries
+│   ├── migration/             # Schema migration safety
+│   ├── meta/                  # Test isolation invariants
+│   └── helpers/               # Setup, factories, god check, env override
+├── bench/                     # Perf measurements (vitest bench) — kept out of test runner
+├── docs/                      # 18 spec docs, read in order
+├── .bocek/vault/              # Architectural decisions with rejected alternatives
+├── drizzle/                   # Migrations
+└── docker-compose.yml         # Local Postgres on :5433
 ```
 
 ## Quick Start
@@ -146,7 +201,9 @@ bun run db:seed
 bun run dev
 
 # Run tests (always against local Docker Postgres)
-bun test
+bun run test          # vitest run — correctness suite
+bun run test:watch    # vitest — watch mode
+bun run bench         # vitest bench — perf measurements (separate from test gate)
 ```
 
 ### Production / Demo (Supabase)
@@ -179,6 +236,21 @@ bun run start
 | GET | `/api/v1/payments` | List payments |
 | GET | `/api/v1/payments/:id/ledger` | View payment's ledger entries |
 | GET | `/api/v1/accounts/:id/balance` | Query account balance |
+
+## Architecture decisions
+
+Every architectural choice is recorded in `.bocek/vault/` with the rejected
+alternative and the reasoning. Quick map:
+
+| Decision | What was chosen | Why |
+|---|---|---|
+| `2026-04-26-amount-wire-format` | JSON integer, cap 99,999,999 cents | Stripe-shape commitment; crypto out of scope |
+| `2026-04-26-multi-capture-model` | Multi-capture v1, hold released on first capture | Marketplace + split-shipment patterns are in lane |
+| `2026-04-26-amount-validation-status-code` | 400 (schema), not 422 (runtime) | Aligns with Stripe/Adyen; preserves monitoring signal |
+| `2026-04-26-test-category-separation` | `tests/` for correctness, `bench/` for perf | Universal pattern across production-grade engines |
+| `2026-04-26-vitest-migration` | Vitest as test runner; Bun stays as production runtime | Ecosystem alignment with Vendure/PayloadCMS/Medusa |
+| `2026-04-26-deployment-platform-railway` | Railway $5/mo EU, Supabase EU-West-1 | Existing paid plan + region match |
+| `2026-04-26-readme-cli-and-landing-asset` | Skip CLI; asciinema-curl hero; case-study README | Loom + Scalar /docs cover the synchronous demo surface |
 
 ---
 

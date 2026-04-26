@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ledgerService } from "../../../src/ledger/service";
 import { paymentService } from "../../../src/payments/service";
 import { assertEntriesBalance } from "../../helpers/assertions";
@@ -6,6 +6,7 @@ import {
   createAuthorizedPayment,
   createCapturedPayment,
   createVoidedPayment,
+  uniqueKey,
 } from "../../helpers/factories";
 import { verifySystemBalance } from "../../helpers/god-check";
 import { cleanBetweenTests, getTestSQL, setupTestDB, teardownTestDB } from "../../helpers/setup";
@@ -26,14 +27,14 @@ afterEach(async () => {
 describe("void", () => {
   it("transitions payment to voided status", async () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
-    const voided = await paymentService.void(db, auth.id);
+    const voided = await paymentService.void(db, auth.id, uniqueKey());
 
     expect(voided.status).toBe("voided");
   });
 
   it("creates reversing ledger entries", async () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
-    await paymentService.void(db, auth.id);
+    await paymentService.void(db, auth.id, uniqueKey());
 
     const transactions = await ledgerService.getTransactionsByReference(db, "payment", auth.id);
     expect(transactions).toHaveLength(2);
@@ -50,7 +51,7 @@ describe("void", () => {
     const balanceAfterAuth = await ledgerService.getBalance(db, "customer_holds");
     expect(balanceAfterAuth - balanceBefore).toBe(10000n);
 
-    await paymentService.void(db, auth.id);
+    await paymentService.void(db, auth.id, uniqueKey());
 
     const balanceAfterVoid = await ledgerService.getBalance(db, "customer_holds");
     expect(balanceAfterVoid).toBe(balanceBefore);
@@ -59,7 +60,7 @@ describe("void", () => {
   it("rejects voiding a captured payment", async () => {
     const captured = await createCapturedPayment(db);
 
-    const err = await paymentService.void(db, captured.id).catch((e) => e);
+    const err = await paymentService.void(db, captured.id, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/captured|state|transition/i);
@@ -68,7 +69,7 @@ describe("void", () => {
   it("rejects voiding an already voided payment", async () => {
     const voided = await createVoidedPayment(db);
 
-    const err = await paymentService.void(db, voided.id).catch((e) => e);
+    const err = await paymentService.void(db, voided.id, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/void|state|already/i);
@@ -77,7 +78,7 @@ describe("void", () => {
   it("voided payment is terminal — capture fails", async () => {
     const voided = await createVoidedPayment(db);
 
-    const err = await paymentService.capture(db, voided.id).catch((e) => e);
+    const err = await paymentService.capture(db, voided.id, undefined, uniqueKey()).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/void|state|transition/i);
   });
@@ -85,14 +86,14 @@ describe("void", () => {
   it("voided payment is terminal — refund fails", async () => {
     const voided = await createVoidedPayment(db);
 
-    const err = await paymentService.refund(db, voided.id).catch((e) => e);
+    const err = await paymentService.refund(db, voided.id, undefined, uniqueKey()).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/void|state|transition/i);
   });
 
   it("clears expiresAt on the voided payment", async () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
-    const voided = await paymentService.void(db, auth.id);
+    const voided = await paymentService.void(db, auth.id, uniqueKey());
 
     expect(voided.expiresAt).toBeNull();
   });

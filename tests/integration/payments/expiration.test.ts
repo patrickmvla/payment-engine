@@ -1,8 +1,8 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { ledgerService } from "../../../src/ledger/service";
 import { paymentService } from "../../../src/payments/service";
-import { createAuthorizedPayment } from "../../helpers/factories";
+import { createAuthorizedPayment , uniqueKey } from "../../helpers/factories";
 import { verifySystemBalance } from "../../helpers/god-check";
 import { cleanBetweenTests, getTestSQL, setupTestDB, teardownTestDB } from "../../helpers/setup";
 
@@ -35,7 +35,7 @@ describe("expiration", () => {
       sql`UPDATE payments SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = ${payment.id}`,
     );
 
-    const err = await paymentService.capture(db, payment.id).catch((e) => e);
+    const err = await paymentService.capture(db, payment.id, undefined, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/expir|state|transition/i);
@@ -48,7 +48,7 @@ describe("expiration", () => {
       sql`UPDATE payments SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = ${payment.id}`,
     );
 
-    const err = await paymentService.void(db, payment.id).catch((e) => e);
+    const err = await paymentService.void(db, payment.id, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/expir|state|transition/i);
@@ -57,7 +57,7 @@ describe("expiration", () => {
   it("capture before expiry succeeds", async () => {
     const payment = await createAuthorizedPayment(db, { amount: 10000n });
 
-    const captured = await paymentService.capture(db, payment.id);
+    const captured = await paymentService.capture(db, payment.id, undefined, uniqueKey());
     expect(captured.status).toBe("captured");
   });
 
@@ -73,7 +73,7 @@ describe("expiration", () => {
     );
 
     // Trigger expiration check by attempting capture
-    await paymentService.capture(db, payment.id).catch(() => {});
+    await paymentService.capture(db, payment.id, undefined, uniqueKey()).catch(() => {});
 
     const payment2 = await paymentService.getPayment(db, payment.id);
     expect(["expired", "voided"]).toContain(payment2.status);

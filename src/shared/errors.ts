@@ -37,7 +37,12 @@ export class PaymentNotFoundError extends AppError {
 }
 
 export class InvalidStateTransitionError extends AppError {
-  constructor(paymentId: string, currentStatus: string, attemptedAction: string) {
+  constructor(
+    paymentId: string,
+    currentStatus: string,
+    attemptedAction: string,
+    allowedActions?: string[],
+  ) {
     super(
       "invalid_state_transition",
       `Cannot ${attemptedAction} a payment with status '${currentStatus}'`,
@@ -46,6 +51,7 @@ export class InvalidStateTransitionError extends AppError {
         payment_id: paymentId,
         current_status: currentStatus,
         attempted_action: attemptedAction,
+        ...(allowedActions ? { allowed_actions: allowedActions } : {}),
       },
     );
     this.name = "InvalidStateTransitionError";

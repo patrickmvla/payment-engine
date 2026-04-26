@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, sql } from "drizzle-orm";
+import { and, desc, eq, lt } from "drizzle-orm";
 import { ledgerService } from "../ledger/service";
 import type { Database } from "../shared/db";
 import {
@@ -8,9 +8,10 @@ import {
   InvalidStateTransitionError as ServiceStateError,
 } from "../shared/errors";
 import { generateId } from "../shared/id";
-import { splitAmount } from "../shared/money";
+import { claimIdempotency, hashParams, type TxLike } from "../shared/idempotency";
+import { splitAmount, toDisplayAmount } from "../shared/money";
 import { idempotencyKeys, payments } from "./schema";
-import { validateTransition } from "./state-machine";
+import { getValidTransitions, validateTransition } from "./state-machine";
 import type {
   AuthorizeParams,
   CaptureParams,
@@ -22,6 +23,7 @@ import type {
 
 const PLATFORM_FEE_PERCENT = 3;
 const AUTH_EXPIRY_DAYS = 7;
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
 function toPaymentRecord(row: typeof payments.$inferSelect): PaymentRecord {
   return {
@@ -42,7 +44,7 @@ function toPaymentRecord(row: typeof payments.$inferSelect): PaymentRecord {
 }
 
 async function findPaymentForUpdate(
-  tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+  tx: TxLike,
   paymentId: string,
 ): Promise<typeof payments.$inferSelect> {
   const rows = await tx.select().from(payments).where(eq(payments.id, paymentId)).for("update");
@@ -56,7 +58,6 @@ async function findPaymentForUpdate(
 
 function checkExpiration(row: typeof payments.$inferSelect): typeof payments.$inferSelect {
   if (row.status === "authorized" && row.expiresAt && new Date(row.expiresAt) < new Date()) {
-    // Mark as expired — will be persisted by the caller
     return { ...row, status: "expired" };
   }
   return row;
@@ -67,48 +68,60 @@ async function authorize(
   params: AuthorizeParams,
   idempotencyKey: string,
 ): Promise<PaymentRecord> {
-  // Check idempotency first
-  const existingKey = await db
-    .select()
-    .from(idempotencyKeys)
-    .where(eq(idempotencyKeys.key, idempotencyKey));
-
-  if (existingKey.length > 0) {
-    const existing = existingKey[0]!;
-    // Check if params match by comparing against the stored payment
-    const existingPayment = await db
-      .select()
-      .from(payments)
-      .where(eq(payments.id, existing.resourceId));
-
-    if (existingPayment.length > 0) {
-      const p = existingPayment[0]!;
-      if (p.amount !== params.amount || p.currency !== params.currency) {
-        throw new IdempotencyConflictError(idempotencyKey);
-      }
-      return toPaymentRecord(p);
-    }
-  }
-
-  const paymentId = generateId("pay");
-  const expiresAt = new Date(Date.now() + AUTH_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+  const paramsHash = hashParams({
+    amount: params.amount,
+    currency: params.currency,
+    description: params.description ?? null,
+    metadata: params.metadata ?? null,
+  });
 
   return await db.transaction(async (tx) => {
-    // Double-check idempotency inside transaction
-    const existingPaymentByKey = await tx
-      .select()
-      .from(payments)
-      .where(eq(payments.idempotencyKey, idempotencyKey));
+    const paymentId = generateId("pay");
+    const expiresAt = new Date(Date.now() + AUTH_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 
-    if (existingPaymentByKey.length > 0) {
-      const p = existingPaymentByKey[0]!;
-      if (p.amount !== params.amount || p.currency !== params.currency) {
+    const claimed = await tx
+      .insert(idempotencyKeys)
+      .values({
+        key: idempotencyKey,
+        resourceType: "payment.authorize",
+        resourceId: paymentId,
+        responseCode: 201,
+        responseBody: { params_hash: paramsHash },
+        expiresAt: new Date(Date.now() + IDEMPOTENCY_TTL_MS),
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (claimed.length === 0) {
+      const existing = await tx
+        .select()
+        .from(idempotencyKeys)
+        .where(eq(idempotencyKeys.key, idempotencyKey));
+
+      if (existing.length === 0) {
         throw new IdempotencyConflictError(idempotencyKey);
       }
-      return toPaymentRecord(p);
+
+      const row = existing[0]!;
+      const stored = row.responseBody as { params_hash?: string } | null;
+
+      if (row.resourceType !== "payment.authorize" || stored?.params_hash !== paramsHash) {
+        throw new IdempotencyConflictError(idempotencyKey);
+      }
+
+      const existingPayment = await tx
+        .select()
+        .from(payments)
+        .where(eq(payments.id, row.resourceId));
+
+      if (existingPayment.length === 0) {
+        throw new IdempotencyConflictError(idempotencyKey);
+      }
+
+      return toPaymentRecord(existingPayment[0]!);
     }
 
-    const rows = await tx
+    const inserted = await tx
       .insert(payments)
       .values({
         id: paymentId,
@@ -125,9 +138,8 @@ async function authorize(
       })
       .returning();
 
-    // Create ledger entries: DEBIT customer_holds / CREDIT customer_funds
     await ledgerService.postTransaction(tx as unknown as Database, {
-      description: `Authorize payment ${paymentId}`,
+      description: `Authorize ${toDisplayAmount(params.amount)} for ${paymentId}`,
       referenceType: "payment",
       referenceId: paymentId,
       entries: [
@@ -136,22 +148,12 @@ async function authorize(
       ],
     });
 
-    // Store idempotency key
-    await tx.insert(idempotencyKeys).values({
-      key: idempotencyKey,
-      resourceType: "payment",
-      resourceId: paymentId,
-      responseCode: 201,
-      responseBody: {},
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    });
-
-    return toPaymentRecord(rows[0]!);
+    return toPaymentRecord(inserted[0]!);
   });
 }
 
 async function handleExpiration(
-  tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+  tx: TxLike,
   row: typeof payments.$inferSelect,
   paymentId: string,
 ): Promise<void> {
@@ -161,7 +163,7 @@ async function handleExpiration(
     .where(eq(payments.id, paymentId));
 
   await ledgerService.postTransaction(tx as unknown as Database, {
-    description: `Expire payment ${paymentId}`,
+    description: `Expire ${toDisplayAmount(row.amount)} for ${paymentId}`,
     referenceType: "payment",
     referenceId: paymentId,
     entries: [
@@ -174,12 +176,29 @@ async function handleExpiration(
 async function capture(
   db: Database,
   paymentId: string,
-  params?: CaptureParams,
+  params: CaptureParams | undefined,
+  idempotencyKey: string,
 ): Promise<PaymentRecord> {
+  const paramsHash = hashParams({ amount: params?.amount ?? null });
+
   const result = await db.transaction(async (tx) => {
     let row = await findPaymentForUpdate(tx, paymentId);
 
-    // Check expiration on-access
+    const claim = await claimIdempotency(
+      tx,
+      {
+        key: idempotencyKey,
+        resourceType: "payment.capture",
+        resourceId: paymentId,
+        paramsHash,
+      },
+      200,
+    );
+
+    if (!claim.won) {
+      return { expired: false as const, payment: toPaymentRecord(row) };
+    }
+
     row = checkExpiration(row);
     if (row.status === "expired") {
       await handleExpiration(tx, row, paymentId);
@@ -188,7 +207,11 @@ async function capture(
 
     validateTransition(row.status as any, "captured");
 
-    const captureAmount = params?.amount ?? row.authorizedAmount;
+    // Multi-capture per [[2026-04-26-multi-capture-model]]: capture amount
+    // is bounded by remaining authorized (auth - already-captured), not by
+    // the full auth amount. Default amount when omitted is the remaining.
+    const remainingAuthorized = row.authorizedAmount - row.capturedAmount;
+    const captureAmount = params?.amount ?? remainingAuthorized;
 
     if (captureAmount <= 0n) {
       throw new InvalidAmountError("Capture amount must be greater than zero", {
@@ -196,30 +219,40 @@ async function capture(
       });
     }
 
-    if (captureAmount > row.authorizedAmount) {
+    if (captureAmount > remainingAuthorized) {
       throw new InvalidAmountError(
-        `Capture amount ${captureAmount} exceeds authorized amount ${row.authorizedAmount}`,
+        `Capture amount ${captureAmount} exceeds remaining authorized amount ${remainingAuthorized}`,
         {
           capture_amount: captureAmount.toString(),
+          remaining_authorized: remainingAuthorized.toString(),
           authorized_amount: row.authorizedAmount.toString(),
+          already_captured: row.capturedAmount.toString(),
         },
       );
     }
 
     const { merchantShare, fee } = splitAmount(captureAmount, PLATFORM_FEE_PERCENT);
 
-    // Build capture ledger entries: 3 DEBIT/CREDIT pairs (6 entries) when fee > 0
-    // or 2 DEBIT/CREDIT pairs (4 entries) when fee = 0
-    const captureEntries: { accountId: string; direction: "DEBIT" | "CREDIT"; amount: bigint }[] = [
-      // 1. Release hold (reversal of auth) — full authorized amount
-      { accountId: "customer_funds", direction: "DEBIT", amount: row.authorizedAmount },
-      { accountId: "customer_holds", direction: "CREDIT", amount: row.authorizedAmount },
-      // 2. Charge customer → merchant (merchant share)
+    // Hold release fires ONCE — on the first capture (when capturedAmount is
+    // still 0). Subsequent partial captures only post the customer→merchant
+    // and customer→platform-fee transfers; the hold has already been
+    // released in full.
+    const isFirstCapture = row.capturedAmount === 0n;
+    const captureEntries: { accountId: string; direction: "DEBIT" | "CREDIT"; amount: bigint }[] =
+      [];
+
+    if (isFirstCapture) {
+      captureEntries.push(
+        { accountId: "customer_funds", direction: "DEBIT", amount: row.authorizedAmount },
+        { accountId: "customer_holds", direction: "CREDIT", amount: row.authorizedAmount },
+      );
+    }
+
+    captureEntries.push(
       { accountId: "customer_funds", direction: "DEBIT", amount: merchantShare },
       { accountId: "merchant_payable", direction: "CREDIT", amount: merchantShare },
-    ];
+    );
 
-    // 3. Charge customer → platform fee (only if fee > 0)
     if (fee > 0n) {
       captureEntries.push(
         { accountId: "customer_funds", direction: "DEBIT", amount: fee },
@@ -228,7 +261,7 @@ async function capture(
     }
 
     await ledgerService.postTransaction(tx as unknown as Database, {
-      description: `Capture payment ${paymentId}`,
+      description: `Capture ${toDisplayAmount(captureAmount)} for ${paymentId}`,
       referenceType: "payment",
       referenceId: paymentId,
       entries: captureEntries,
@@ -238,7 +271,7 @@ async function capture(
       .update(payments)
       .set({
         status: "captured",
-        capturedAmount: captureAmount,
+        capturedAmount: row.capturedAmount + captureAmount,
         expiresAt: null,
         updatedAt: new Date(),
       })
@@ -249,16 +282,36 @@ async function capture(
   });
 
   if (result.expired) {
-    throw new ServiceStateError(paymentId, "expired", "capture");
+    throw new ServiceStateError(paymentId, "expired", "capture", getValidTransitions("expired"));
   }
   return result.payment;
 }
 
-async function voidPayment(db: Database, paymentId: string): Promise<PaymentRecord> {
+async function voidPayment(
+  db: Database,
+  paymentId: string,
+  idempotencyKey: string,
+): Promise<PaymentRecord> {
+  const paramsHash = hashParams({});
+
   const result = await db.transaction(async (tx) => {
     let row = await findPaymentForUpdate(tx, paymentId);
 
-    // Check expiration on-access
+    const claim = await claimIdempotency(
+      tx,
+      {
+        key: idempotencyKey,
+        resourceType: "payment.void",
+        resourceId: paymentId,
+        paramsHash,
+      },
+      200,
+    );
+
+    if (!claim.won) {
+      return { expired: false as const, payment: toPaymentRecord(row) };
+    }
+
     row = checkExpiration(row);
     if (row.status === "expired") {
       await handleExpiration(tx, row, paymentId);
@@ -267,9 +320,8 @@ async function voidPayment(db: Database, paymentId: string): Promise<PaymentReco
 
     validateTransition(row.status as any, "voided");
 
-    // Void entries: mirror of auth (DEBIT customer_funds / CREDIT customer_holds)
     await ledgerService.postTransaction(tx as unknown as Database, {
-      description: `Void payment ${paymentId}`,
+      description: `Void ${toDisplayAmount(row.authorizedAmount)} for ${paymentId}`,
       referenceType: "payment",
       referenceId: paymentId,
       entries: [
@@ -292,7 +344,7 @@ async function voidPayment(db: Database, paymentId: string): Promise<PaymentReco
   });
 
   if (result.expired) {
-    throw new ServiceStateError(paymentId, "expired", "void");
+    throw new ServiceStateError(paymentId, "expired", "void", getValidTransitions("expired"));
   }
   return result.payment;
 }
@@ -300,21 +352,45 @@ async function voidPayment(db: Database, paymentId: string): Promise<PaymentReco
 async function refund(
   db: Database,
   paymentId: string,
-  params?: RefundParams,
+  params: RefundParams | undefined,
+  idempotencyKey: string,
 ): Promise<PaymentRecord> {
+  const paramsHash = hashParams({
+    amount: params?.amount ?? null,
+    reason: params?.reason ?? null,
+  });
+
   return await db.transaction(async (tx) => {
     const row = await findPaymentForUpdate(tx, paymentId);
 
-    // Determine target status
+    const claim = await claimIdempotency(
+      tx,
+      {
+        key: idempotencyKey,
+        resourceType: "payment.refund",
+        resourceId: paymentId,
+        paramsHash,
+      },
+      200,
+    );
+
+    if (!claim.won) {
+      return toPaymentRecord(row);
+    }
+
     const currentStatus = row.status as PaymentRecord["status"];
 
-    // Refund is valid from captured, settled, or partially_refunded
     if (
       currentStatus !== "captured" &&
       currentStatus !== "settled" &&
       currentStatus !== "partially_refunded"
     ) {
-      throw new ServiceStateError(paymentId, currentStatus, "refund");
+      throw new ServiceStateError(
+        paymentId,
+        currentStatus,
+        "refund",
+        getValidTransitions(currentStatus),
+      );
     }
 
     const refundAmount = params?.amount ?? row.capturedAmount - row.refundedAmount;
@@ -340,13 +416,13 @@ async function refund(
     const isFullRefund = newRefundedAmount >= row.capturedAmount;
     const newStatus = isFullRefund ? "refunded" : "partially_refunded";
 
-    // Calculate proportional fee refund
+    validateTransition(currentStatus, newStatus as any);
+
     const { fee: refundFee, merchantShare: refundMerchantShare } = splitAmount(
       refundAmount,
       PLATFORM_FEE_PERCENT,
     );
 
-    // Refund entries: reverse merchant + fee → credit customer
     const refundEntries: { accountId: string; direction: "DEBIT" | "CREDIT"; amount: bigint }[] = [
       { accountId: "merchant_payable", direction: "DEBIT", amount: refundMerchantShare },
       { accountId: "customer_funds", direction: "CREDIT", amount: refundAmount },
@@ -359,23 +435,14 @@ async function refund(
         amount: refundFee,
       });
     }
-    // Balance check:
-    // Total debits = refundMerchantShare + refundFee = refundAmount
-    // Total credits = refundAmount ✓
 
+    const reasonSuffix = params?.reason ? `: ${params.reason}` : "";
     await ledgerService.postTransaction(tx as unknown as Database, {
-      description: `Refund payment ${paymentId}`,
+      description: `Refund ${toDisplayAmount(refundAmount)} for ${paymentId}${reasonSuffix}`,
       referenceType: "payment",
       referenceId: paymentId,
       entries: refundEntries,
     });
-
-    // Validate transition
-    if (currentStatus === "captured" || currentStatus === "settled") {
-      validateTransition(currentStatus, newStatus as any);
-    } else if (currentStatus === "partially_refunded") {
-      validateTransition("partially_refunded", newStatus as any);
-    }
 
     const updated = await tx
       .update(payments)
@@ -391,18 +458,37 @@ async function refund(
   });
 }
 
-async function settle(db: Database, paymentId: string): Promise<PaymentRecord> {
+async function settle(
+  db: Database,
+  paymentId: string,
+  idempotencyKey: string,
+): Promise<PaymentRecord> {
+  const paramsHash = hashParams({});
+
   return await db.transaction(async (tx) => {
     const row = await findPaymentForUpdate(tx, paymentId);
 
+    const claim = await claimIdempotency(
+      tx,
+      {
+        key: idempotencyKey,
+        resourceType: "payment.settle",
+        resourceId: paymentId,
+        paramsHash,
+      },
+      200,
+    );
+
+    if (!claim.won) {
+      return toPaymentRecord(row);
+    }
+
     validateTransition(row.status as any, "settled");
 
-    // Settlement amount = merchant_share (captured - fee)
     const { merchantShare } = splitAmount(row.capturedAmount, PLATFORM_FEE_PERCENT);
 
-    // Settlement entries: DEBIT merchant_payable / CREDIT platform_cash
     await ledgerService.postTransaction(tx as unknown as Database, {
-      description: `Settle payment ${paymentId}`,
+      description: `Settle ${toDisplayAmount(merchantShare)} for ${paymentId}`,
       referenceType: "payment",
       referenceId: paymentId,
       entries: [

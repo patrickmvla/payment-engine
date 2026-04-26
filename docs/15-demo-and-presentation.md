@@ -1,5 +1,30 @@
 # Demo & Presentation — 5 Minutes to Prove You're Not Playing
 
+> **STATUS (2026-04-26): SUPERSEDED.** This doc planned a synchronous
+> 5-minute live-terminal demo with a bespoke CLI harness. The current
+> presentation strategy uses a different surface stack:
+>
+> - **Astro + Vercel landing page** as the first-impression surface
+>   (per `[[2026-04-26-surface-architecture-landing-page]]`)
+> - **2-minute Loom walkthrough** with bug-find-and-fix story (60s) +
+>   architecture walkthrough (60s), embedded on both surfaces
+>   (per `[[2026-04-26-loom-walkthrough-content]]`)
+> - **asciinema-curl recording** of the live Railway API for the
+>   landing-page hero asset
+>   (per `[[2026-04-26-readme-cli-and-landing-asset]]`)
+> - **Case-study README** as the GitHub-landing technical-deep-dive
+>   surface
+>
+> The bespoke CLI harness this doc specifies is NOT built. Section 1's
+> 5-minute structure remains useful as REFERENCE for the synchronous
+> live-demo case (e.g., a CTO interview screen-share), but it's no longer
+> the primary presentation surface. The asciinema-curl recording is the
+> closest equivalent for hero-asset use.
+>
+> Original doc preserved below for reference.
+
+---
+
 A CTO has decided whether you're serious before you finish your second
 sentence. This document defines the demo — what to show, in what order, and
 what to say. No slides. No Postman screenshots. A live terminal hitting a real

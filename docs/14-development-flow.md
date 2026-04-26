@@ -593,4 +593,37 @@ edge case covered, every race condition tested, every amount balanced.
 
 ---
 
+## 8. Perf measurements live in `bench/`, not `tests/`
+
+Performance and load measurements are NOT tests. They produce
+distributions, not pass/fail booleans. Putting them in the same runner
+that gates correctness is a category error — a noisy single-sample
+threshold like "concurrent < 5x single" fails ~1 in 3 runs on a
+developer machine even when the engine is working correctly. The flake
+either gets ignored (signal lost) or thresholds get loosened until the
+test catches nothing.
+
+**Rule (per `[[2026-04-26-test-category-separation]]`):**
+
+- `tests/` — correctness, gated by `bun run test`. Pass/fail.
+- `bench/` — perf measurements via `vitest bench`. Reports p50, p75,
+  p99, mean, stddev, RME, samples. No threshold assertions. Run on
+  demand or against a stored baseline JSON for regression detection.
+
+**Run separately:**
+
+```bash
+bun run test    # vitest run — correctness suite, must be green
+bun run bench   # vitest bench — perf measurements, on demand
+```
+
+**Universal pattern across production-grade financial systems:**
+TigerBeetle separates `test:unit`, `test:integration`, `vortex`,
+`fuzz`, and the VOPR simulator. Hyperswitch keeps `loadtest/` separate
+from `cargo test`. Killbill has dedicated perf modules. Mixing perf
+into the unit test runner does not appear anywhere in the surveyed
+production engines.
+
+---
+
 Previous: [13 — Database Connection Strategy](./13-database-connection-strategy.md) | Back to: [README](../README.md)

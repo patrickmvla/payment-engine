@@ -16,6 +16,12 @@ if (testUrl.includes("supabase")) {
   process.env.DATABASE_SSL = "true";
 }
 
+// Test layer uses @hono/node-server so Vitest workers (running under Node)
+// can spin up the test server. Production code (src/server.ts) keeps
+// Bun.serve. Hono's adapter-agnostic design makes this transparent — the
+// same `app.fetch` is consumed by either adapter.
+// Resolved per amendment to [[2026-04-26-vitest-migration]] (option B).
+import { serve, type ServerType } from "@hono/node-server";
 import {
   cleanBetweenTests,
   getTestSQL,
@@ -27,23 +33,27 @@ import { uniqueKey } from "../helpers/factories";
 export const TEST_PORT = 4567;
 export const BASE_URL = `http://localhost:${TEST_PORT}`;
 
-let server: ReturnType<typeof Bun.serve> | null = null;
+let server: ServerType | null = null;
 
 export async function startTestServer() {
-  const { default: app } = await import("../../src/server");
+  const { app } = await import("../../src/server");
 
-  server = Bun.serve({
+  server = serve({
     fetch: app.fetch,
     port: TEST_PORT,
-    idleTimeout: 120,
   });
 }
 
 export async function stopTestServer() {
-  if (server) {
-    server.stop();
-    server = null;
-  }
+  if (!server) return;
+  const s = server;
+  server = null;
+  await new Promise<void>((resolve, reject) => {
+    s.close((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
 }
 
 // Re-export helpers

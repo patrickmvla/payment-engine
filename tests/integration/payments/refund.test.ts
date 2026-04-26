@@ -1,10 +1,11 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ledgerService } from "../../../src/ledger/service";
 import { paymentService } from "../../../src/payments/service";
 import {
   createAuthorizedPayment,
   createCapturedPayment,
   createVoidedPayment,
+  uniqueKey,
 } from "../../helpers/factories";
 import { verifySystemBalance } from "../../helpers/god-check";
 import { cleanBetweenTests, getTestSQL, setupTestDB, teardownTestDB } from "../../helpers/setup";
@@ -25,7 +26,7 @@ afterEach(async () => {
 describe("refund", () => {
   it("full refund transitions to refunded status", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    const refunded = await paymentService.refund(db, captured.id, { amount: 10000n });
+    const refunded = await paymentService.refund(db, captured.id, { amount: 10000n }, uniqueKey());
 
     expect(refunded.status).toBe("refunded");
     expect(refunded.refundedAmount).toBe(10000n);
@@ -33,7 +34,7 @@ describe("refund", () => {
 
   it("omitted amount refunds the entire captured amount", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    const refunded = await paymentService.refund(db, captured.id);
+    const refunded = await paymentService.refund(db, captured.id, undefined, uniqueKey());
 
     expect(refunded.status).toBe("refunded");
     expect(refunded.refundedAmount).toBe(10000n);
@@ -41,7 +42,7 @@ describe("refund", () => {
 
   it("partial refund transitions to partially_refunded", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    const partial = await paymentService.refund(db, captured.id, { amount: 3000n });
+    const partial = await paymentService.refund(db, captured.id, { amount: 3000n }, uniqueKey());
 
     expect(partial.status).toBe("partially_refunded");
     expect(partial.refundedAmount).toBe(3000n);
@@ -50,24 +51,24 @@ describe("refund", () => {
   it("multiple partial refunds accumulate then final transitions to refunded", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
 
-    const r1 = await paymentService.refund(db, captured.id, { amount: 2000n });
+    const r1 = await paymentService.refund(db, captured.id, { amount: 2000n }, uniqueKey());
     expect(r1.status).toBe("partially_refunded");
     expect(r1.refundedAmount).toBe(2000n);
 
-    const r2 = await paymentService.refund(db, captured.id, { amount: 3000n });
+    const r2 = await paymentService.refund(db, captured.id, { amount: 3000n }, uniqueKey());
     expect(r2.status).toBe("partially_refunded");
     expect(r2.refundedAmount).toBe(5000n);
 
-    const r3 = await paymentService.refund(db, captured.id, { amount: 5000n });
+    const r3 = await paymentService.refund(db, captured.id, { amount: 5000n }, uniqueKey());
     expect(r3.status).toBe("refunded");
     expect(r3.refundedAmount).toBe(10000n);
   });
 
   it("refund after partial capture is limited to captured amount", async () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
-    const captured = await paymentService.capture(db, auth.id, { amount: 7000n });
+    const captured = await paymentService.capture(db, auth.id, { amount: 7000n }, uniqueKey());
 
-    const refunded = await paymentService.refund(db, captured.id, { amount: 7000n });
+    const refunded = await paymentService.refund(db, captured.id, { amount: 7000n }, uniqueKey());
     expect(refunded.status).toBe("refunded");
     expect(refunded.refundedAmount).toBe(7000n);
   });
@@ -75,8 +76,8 @@ describe("refund", () => {
   it("refunding exactly the remaining amount transitions to refunded", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
 
-    await paymentService.refund(db, captured.id, { amount: 6000n });
-    const final = await paymentService.refund(db, captured.id, { amount: 4000n });
+    await paymentService.refund(db, captured.id, { amount: 6000n }, uniqueKey());
+    const final = await paymentService.refund(db, captured.id, { amount: 4000n }, uniqueKey());
 
     expect(final.status).toBe("refunded");
     expect(final.refundedAmount).toBe(10000n);
@@ -84,7 +85,7 @@ describe("refund", () => {
 
   it("refunding 1 cent succeeds", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    const refunded = await paymentService.refund(db, captured.id, { amount: 1n });
+    const refunded = await paymentService.refund(db, captured.id, { amount: 1n }, uniqueKey());
 
     expect(refunded.status).toBe("partially_refunded");
     expect(refunded.refundedAmount).toBe(1n);
@@ -93,7 +94,7 @@ describe("refund", () => {
   it("rejects refund exceeding remaining refundable amount", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
 
-    const err = await paymentService.refund(db, captured.id, { amount: 10001n }).catch((e) => e);
+    const err = await paymentService.refund(db, captured.id, { amount: 10001n }, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/exceed|remaining|amount/i);
@@ -102,7 +103,7 @@ describe("refund", () => {
   it("rejects refund of zero amount", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
 
-    const err = await paymentService.refund(db, captured.id, { amount: 0n }).catch((e) => e);
+    const err = await paymentService.refund(db, captured.id, { amount: 0n }, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/zero|amount|invalid/i);
@@ -110,9 +111,9 @@ describe("refund", () => {
 
   it("rejects further refunds after full refund", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    await paymentService.refund(db, captured.id, { amount: 10000n });
+    await paymentService.refund(db, captured.id, { amount: 10000n }, uniqueKey());
 
-    const err = await paymentService.refund(db, captured.id, { amount: 1n }).catch((e) => e);
+    const err = await paymentService.refund(db, captured.id, { amount: 1n }, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/refunded|exceed|remaining/i);
@@ -121,7 +122,7 @@ describe("refund", () => {
   it("rejects refunding an authorized (not captured) payment", async () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
 
-    const err = await paymentService.refund(db, auth.id, { amount: 5000n }).catch((e) => e);
+    const err = await paymentService.refund(db, auth.id, { amount: 5000n }, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/authorized|state|transition|capture/i);
@@ -130,7 +131,7 @@ describe("refund", () => {
   it("rejects refunding a voided payment", async () => {
     const voided = await createVoidedPayment(db);
 
-    const err = await paymentService.refund(db, voided.id, { amount: 5000n }).catch((e) => e);
+    const err = await paymentService.refund(db, voided.id, { amount: 5000n }, uniqueKey()).catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/void|state|transition/i);
@@ -138,8 +139,8 @@ describe("refund", () => {
 
   it("full lifecycle (auth -> capture -> refund) nets all accounts to zero", async () => {
     const auth = await createAuthorizedPayment(db, { amount: 10000n });
-    const captured = await paymentService.capture(db, auth.id, { amount: 10000n });
-    await paymentService.refund(db, captured.id, { amount: 10000n });
+    const captured = await paymentService.capture(db, auth.id, { amount: 10000n }, uniqueKey());
+    await paymentService.refund(db, captured.id, { amount: 10000n }, uniqueKey());
 
     for (const accountId of [
       "customer_holds",
@@ -154,10 +155,12 @@ describe("refund", () => {
 
   it("refund with reason preserves the reason", async () => {
     const captured = await createCapturedPayment(db, { authorizeAmount: 10000n });
-    const refunded = await paymentService.refund(db, captured.id, {
-      amount: 10000n,
-      reason: "Customer requested cancellation",
-    });
+    const refunded = await paymentService.refund(
+      db,
+      captured.id,
+      { amount: 10000n, reason: "Customer requested cancellation" },
+      uniqueKey(),
+    );
 
     expect(refunded.status).toBe("refunded");
     const payment = await paymentService.getPayment(db, captured.id);

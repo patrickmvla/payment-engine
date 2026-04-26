@@ -19,7 +19,7 @@ No exceptions. See `docs/14-development-flow.md` for the full methodology.
 - **ORM:** Drizzle
 - **Validation:** Zod (also generates OpenAPI 3.1 spec)
 - **API Docs:** Scalar at `/docs`
-- **Testing:** bun:test
+- **Testing:** Vitest (Bun is the production runtime; Vitest is the test runner — see `[[2026-04-26-vitest-migration]]`)
 - **Linter/Formatter:** Biome
 
 ## Commands
@@ -31,8 +31,12 @@ bun run db:migrate             # Run Drizzle migrations
 bun run db:seed                # Seed 5 system accounts
 bun run dev                    # Start dev server
 bun run start                  # Start production server
-bun test                       # Run all tests
-bun test --bail                # Stop on first failure
+bun run test                   # Run all tests (vitest run)
+bun run test:watch             # Watch mode (vitest)
+bun run test:unit              # Unit tests only
+bun run test:integration       # Integration tests only
+bun run test:e2e               # E2E tests only
+bun run bench                  # Benchmarks (vitest bench)
 ```
 
 ## Architecture

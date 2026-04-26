@@ -1,0 +1,351 @@
+---
+// Landing page for the Payment Engine portfolio piece.
+// Per .bocek/vault/2026-04-26-surface-architecture-landing-page.md:
+// - First-impression surface for any audience including non-technical
+// - Embed Loom further down (deep dive); hero uses asciinema-curl cast
+// - Cross-link to GitHub README + live API + Loom
+
+const GITHUB_URL = "https://github.com/USER/payment-engine"; // TODO: set
+const LIVE_API_URL = "https://payment-engine.up.railway.app"; // TODO: confirm after Railway deploy
+const LOOM_EMBED_URL = "https://www.loom.com/embed/PLACEHOLDER"; // TODO: replace after recording
+const ASCIINEMA_CAST_URL = "https://asciinema.org/a/PLACEHOLDER"; // TODO: replace after recording
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payment Engine — Production-grade double-entry ledger</title>
+    <meta
+      name="description"
+      content="A payment processor with a double-entry accounting ledger. 447 tests, BigInt money, race-safe idempotency, multi-capture authorization."
+    />
+    <style>
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --muted: #7d8590;
+        --accent: #2f81f7;
+        --green: #3fb950;
+        --border: #30363d;
+        --card: #161b22;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        line-height: 1.6;
+      }
+      .container {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 4rem 1.5rem;
+      }
+      header h1 {
+        font-size: 2.5rem;
+        margin: 0 0 0.5rem;
+        letter-spacing: -0.02em;
+      }
+      header .tagline {
+        font-size: 1.15rem;
+        color: var(--muted);
+        margin: 0 0 2rem;
+        max-width: 60ch;
+      }
+      .ctas {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-bottom: 2.5rem;
+      }
+      .btn {
+        display: inline-block;
+        padding: 0.6rem 1.2rem;
+        border-radius: 6px;
+        text-decoration: none;
+        font-weight: 500;
+        font-size: 0.95rem;
+        transition: opacity 0.15s;
+      }
+      .btn:hover { opacity: 0.85; }
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+      }
+      .btn-secondary {
+        background: transparent;
+        color: var(--fg);
+        border: 1px solid var(--border);
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin: 2rem 0 3rem;
+      }
+      .metric {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1.25rem;
+      }
+      .metric .num {
+        font-family: var(--mono);
+        font-size: 1.6rem;
+        color: var(--green);
+        font-weight: 600;
+      }
+      .metric .label {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin-top: 0.25rem;
+      }
+      .asciinema {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1.5rem;
+        font-family: var(--mono);
+        font-size: 0.85rem;
+        overflow-x: auto;
+        margin: 2rem 0;
+      }
+      .asciinema .prompt { color: var(--muted); }
+      .asciinema .ok { color: var(--green); }
+      h2 {
+        font-size: 1.5rem;
+        margin: 3rem 0 1rem;
+        letter-spacing: -0.01em;
+      }
+      .arch-diagram {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1.5rem;
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        color: var(--fg);
+        overflow-x: auto;
+        white-space: pre;
+        line-height: 1.4;
+      }
+      .case-study {
+        background: var(--card);
+        border-left: 3px solid var(--accent);
+        border-radius: 4px;
+        padding: 1.25rem 1.5rem;
+        margin: 1rem 0;
+      }
+      .case-study h3 {
+        margin-top: 0;
+        font-size: 1.1rem;
+        color: var(--accent);
+      }
+      pre, code {
+        font-family: var(--mono);
+        font-size: 0.85em;
+      }
+      .loom-embed {
+        position: relative;
+        width: 100%;
+        padding-bottom: 62.5%;
+        height: 0;
+        margin: 1rem 0;
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--card);
+        border: 1px solid var(--border);
+      }
+      .loom-embed iframe {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+      footer {
+        margin-top: 4rem;
+        padding-top: 2rem;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      footer a { color: var(--accent); }
+      ul { padding-left: 1.25rem; }
+      li { margin: 0.35rem 0; }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Payment Engine</h1>
+        <p class="tagline">
+          A production-grade payment processor with a double-entry ledger.
+          Authorize → capture → settle → refund, every cent balanced, every
+          retry safe.
+        </p>
+        <div class="ctas">
+          <a class="btn btn-primary" href={LIVE_API_URL + "/docs"}>Try the API</a>
+          <a class="btn btn-secondary" href={GITHUB_URL}>View source on GitHub</a>
+        </div>
+      </header>
+
+      <section>
+        <h2>The numbers</h2>
+        <div class="metrics">
+          <div class="metric">
+            <div class="num">447 tests</div>
+            <div class="label">unit · integration · e2e · property · fuzz · reconciliation</div>
+          </div>
+          <div class="metric">
+            <div class="num">~3000</div>
+            <div class="label"><code>expect()</code> calls covering every spec invariant</div>
+          </div>
+          <div class="metric">
+            <div class="num">God check</div>
+            <div class="label">runs after every integration test: SUM(debits) === SUM(credits)</div>
+          </div>
+          <div class="metric">
+            <div class="num">0 floats</div>
+            <div class="label">BigInt money throughout the engine</div>
+          </div>
+          <div class="metric">
+            <div class="num">7 decisions</div>
+            <div class="label">recorded in vault with rejected alternatives</div>
+          </div>
+          <div class="metric">
+            <div class="num">19.4ms</div>
+            <div class="label">authorize p50 (Railway → Supabase EU, vitest bench)</div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Live demo</h2>
+        <p>
+          Real terminal hitting the live engine on Railway. Authorize $150,
+          capture, view the balanced ledger, watch the god check pass.
+        </p>
+        <div class="asciinema">
+          <p><a href={ASCIINEMA_CAST_URL} target="_blank" rel="noopener">
+            ▶ Open asciinema cast →
+          </a></p>
+          <p style="color: var(--muted); margin-top: 1rem; font-size: 0.8rem;">
+            <em>Cast embed pending recording against live Railway deploy.
+            See <code>scripts/record-demo.sh</code> in the repo.</em>
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Architecture</h2>
+        <pre class="arch-diagram">{`
+HTTP request
+     │
+     ▼
+┌──────────────────────────────────┐
+│  Hono routes (Zod-validated)     │
+│  src/payments/routes.ts          │
+│  src/ledger/routes.ts            │
+└──────────┬───────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────┐
+│  Service layer                   │
+│  src/payments/service.ts         │ ◀── state machine
+│  src/ledger/service.ts           │     (8 states, 13 transitions)
+└──────────┬───────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────┐
+│  Idempotency claim               │
+│  INSERT ... ON CONFLICT          │ ◀── race-safe per-mutation
+│  DO NOTHING RETURNING            │     (5 endpoints)
+└──────────┬───────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────┐
+│  Drizzle (Postgres)              │
+│  Direct conn :5432 (NOT pooled)  │ ◀── pessimistic locking
+│  Supabase EU-West-1              │     (SELECT ... FOR UPDATE)
+└──────────────────────────────────┘
+        `.trim()}</pre>
+      </section>
+
+      <section>
+        <h2>Walkthrough</h2>
+        <p>
+          Two-minute Loom: 60 seconds on a financial bug found and fixed
+          (partial-refund double-refund), 60 seconds on the architecture
+          model.
+        </p>
+        <div class="loom-embed">
+          <iframe
+            src={LOOM_EMBED_URL}
+            frameborder="0"
+            webkitallowfullscreen
+            mozallowfullscreen
+            allowfullscreen
+          ></iframe>
+        </div>
+      </section>
+
+      <section>
+        <h2>Bug found and fixed</h2>
+        <div class="case-study">
+          <h3>Partial-refund double-refund</h3>
+          <p>
+            <strong>Symptom:</strong> a network retry of a successful partial
+            refund could double-refund. Same idempotency key, second call
+            sees the payment in <code>partially_refunded</code> state,
+            validates that <code>refundedAmount + retryAmount ≤ capturedAmount</code>,
+            and executes again. Real money out, twice, no error to the
+            client.
+          </p>
+          <p>
+            <strong>Root cause:</strong> the route layer required an
+            <code>Idempotency-Key</code> header but the service layer never
+            received it. Same was true for capture, void, and settle — all
+            four mutations.
+          </p>
+          <p><strong>Fix in TDD order:</strong></p>
+          <ol>
+            <li>Wrote 4 failing tests asserting the contract: same-key retry returns identical refund, no extra ledger entries, full-refund retry returns original 200, different-amount-same-key returns 409.</li>
+            <li>Built a race-safe idempotency claim in <code>src/shared/idempotency.ts</code> using <code>INSERT ... ON CONFLICT DO NOTHING RETURNING</code> — atomic, no TOCTOU window.</li>
+            <li>Wired the key through every mutation including signature changes across ~80 call sites in tests + factories.</li>
+            <li>All 4 tests turned green. Full suite confirmed no regressions. Added 12 retry tests across all 4 mutations and replaced 4 vacuous "retry" tests that passed by accident.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section>
+        <h2>Stack</h2>
+        <ul>
+          <li><strong>Runtime:</strong> Bun (production)</li>
+          <li><strong>API:</strong> Hono + <code>@hono/zod-openapi</code> (Scalar UI at <code>/docs</code>)</li>
+          <li><strong>Database:</strong> PostgreSQL — Docker for tests, Supabase for production</li>
+          <li><strong>ORM:</strong> Drizzle</li>
+          <li><strong>Validation:</strong> Zod (also generates the OpenAPI 3.1 spec)</li>
+          <li><strong>Tests:</strong> Vitest (correctness) + <code>vitest bench</code> (perf, separated)</li>
+          <li><strong>Money:</strong> BigInt throughout — zero floating point</li>
+        </ul>
+      </section>
+
+      <footer>
+        <p>
+          <a href={GITHUB_URL}>GitHub</a> · <a href={LIVE_API_URL + "/docs"}>API docs</a> · <a href={LOOM_EMBED_URL}>Walkthrough</a>
+        </p>
+        <p>
+          Built to understand fintech from the ground up.
+          Architectural decisions in <code>.bocek/vault/</code>.
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

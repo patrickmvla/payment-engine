@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ledgerService } from "../../../src/ledger/service";
 import { paymentService } from "../../../src/payments/service";
 import { assertEntriesBalance } from "../../helpers/assertions";

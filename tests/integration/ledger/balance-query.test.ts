@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { ledgerService } from "../../../src/ledger/service";
 import { verifySystemBalance } from "../../helpers/god-check";
