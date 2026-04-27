@@ -1,4 +1,5 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { cors } from "hono/cors";
 import { ledgerRoutes } from "./ledger/routes";
 import { setupOpenAPI } from "./openapi";
 import { paymentRoutes } from "./payments/routes";
@@ -11,7 +12,22 @@ import { logger } from "./shared/logger";
 
 const app = new OpenAPIHono();
 
-// Middleware (order matters)
+const ALLOWED_ORIGINS =
+  config.APP_ENV === "production"
+    ? ["https://paymntengine.vercel.app"]
+    : ["http://localhost:3000", "http://localhost:4321", "http://localhost:5173"];
+
+// Middleware (order matters — CORS first so preflight bypasses rate limit)
+app.use(
+  "*",
+  cors({
+    origin: ALLOWED_ORIGINS,
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Idempotency-Key"],
+    exposeHeaders: ["X-Request-ID"],
+    maxAge: 600,
+  }),
+);
 app.use("*", requestTracing);
 app.use("*", securityHeaders);
 app.use("/api/*", rateLimiter);
