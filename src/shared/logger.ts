@@ -23,7 +23,17 @@ function log(level: LogLevel, data: Record<string, unknown> | string, message?: 
   if (typeof data === "string") {
     entry.message = data;
   } else {
-    Object.assign(entry, data);
+    for (const [key, value] of Object.entries(data)) {
+      entry[key] =
+        value instanceof Error
+          ? {
+              name: value.name,
+              message: value.message,
+              stack: value.stack,
+              cause: (value as { cause?: unknown }).cause,
+            }
+          : value;
+    }
     if (message) entry.message = message;
   }
 
